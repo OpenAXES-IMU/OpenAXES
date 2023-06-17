@@ -1,0 +1,2923 @@
+               .deffile adi_defs__1.asm
+               .deffile ddi_defs__1.asm
+               .deffile reg_defs__1.asm
+               .deffile sce_defs__1.asm
+
+               ; Number of supported tasks
+               .define TASK_COUNT      1
+
+               ; Sensor Controller clock frequency in active mode
+               .define ACTIVE_MODE_SCE_CLK_FREQ_MHZ    24
+
+               ; Resource-specified definitions, if any
+               .define AUXIO_I2C_SCL           17
+               .define AUXIO_I2C_SDA           18
+               .define I2C_BASE_DELAY          9
+               .define I2C_EXT_DELAY           4
+               .define I2C_STRETCH_TIMEOUT_US  1000
+               .define I2C_WAIT_STRETCH_DELAY  5
+
+
+               .segment begin "Framework"
+
+
+               VectorTable:
+                                       ; SW 0
+0000 ---- 140e                         jsr         PowerUp
+0001 ---- 0417                         jmp         TaskCtrlReqVector
+                                       ; SW 1
+0002 ---- 140e                         jsr         PowerUp
+0003 ---- 0438                         jmp         EventManTrigVector
+                                       ; PROG 0
+0004 ---- 140e                         jsr         PowerUp
+0005 ---- 0442                         jmp         AonRtcCh2Vector
+                                       ; PROG 1
+0006 ---- 140e                         jsr         PowerUp
+0007 ---- 045f                         jmp         Event0Vector
+                                       ; PROG 2
+0008 ---- 140e                         jsr         PowerUp
+0009 ---- 0468                         jmp         Event1Vector
+                                       ; PROG 3
+000a ---- 140e                         jsr         PowerUp
+000b ---- 0471                         jmp         Event2Vector
+                                       ; SW 2
+000c ---- 140e                         jsr         PowerUp
+000d ---- 047a                         jmp         TaskAlertAckVector
+
+
+
+
+               PowerUp:
+                                       ; Make sure that the last operation mode request has taken effect
+000e ---- 8953                         in          R0, [#IOP_SYSIF_OPMODEREQ]
+000f ---- 9954 /waitForOpmodeSync:     in          R1, [#IOP_SYSIF_OPMODEACK]
+0010 ---- 8d29                         cmp         R0, R1
+0011 ---- befd                         bneq        /waitForOpmodeSync
+
+                                       ; Deassert the power-down request
+0012 ---- 4553                         iobclr      #IOB_SYSIF_OPMODE_PD, [#IOP_SYSIF_OPMODEREQ]
+
+                                       ; Wait for it to take effect
+0013 ---- 2554 /waitForOpmodeAck:      iobtst      #IOB_SYSIF_OPMODE_PD, [#IOP_SYSIF_OPMODEACK]
+0014 ---- aefe                         biob1       /waitForOpmodeAck
+
+                                       ; Prevent wake-up events from propagating to the AON domain
+0015 ---- 445c                         iobclr      #0, [#IOP_SYSIF_WUGATE]
+
+               FwEmptyFunc:            ; Done
+0016 ---- adb7                         rts
+
+
+
+
+               TaskCtrlReqVector:
+                                       ; Clear wake-up event
+0017 ---- 745b                         iobset      #IOB_SYSIF_WUFLAGS_SW_WU0, [#IOP_SYSIF_WUFLAGSCLR]
+0018 ---- 545b                         iobclr      #IOB_SYSIF_WUFLAGS_SW_WU0, [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; For each task ...
+0019 ---- 7000                         ld          R7, #0
+               /loop:
+                                           ; Save the task ID
+001a ---- 7ca2                             st          R7, [#fwCtrlInt/taskId]
+
+                                           ; Handle initialize request, if any
+001b ---- 68ab                             ld          R6, [#fwCtrlExt/bvTaskInitializeReq]
+001c ---- 009f                             ld          R0, #pFwTaskInitializeFuncTable
+001d ---- 1431                             jsr         /handleReq
+
+                                           ; Handle execute request, if any
+001e ---- 68ac                             ld          R6, [#fwCtrlExt/bvTaskExecuteReq]
+001f ---- 00a0                             ld          R0, #pFwTaskExecuteFuncTable
+0020 ---- 1431                             jsr         /handleReq
+
+                                           ; Handle terminate request, if any
+0021 ---- 68ad                             ld          R6, [#fwCtrlExt/bvTaskTerminateReq]
+0022 ---- 00a1                             ld          R0, #pFwTaskTerminateFuncTable
+0023 ---- 1431                             jsr         /handleReq
+
+                                           ; Move on to the next task
+0024 ---- 78a2                             ld          R7, [#fwCtrlInt/taskId]
+0025 ---- f801                             add         R7, #1
+
+0026 ---- fa01                         cmp         R7, #TASK_COUNT
+0027 ---- bef2                         bneq        /loop
+
+                                       ; Update which tasks are ...
+0028 ---- 78a9                         ld          R7, [#fwCtrlExt/bvActiveTasks]
+                                       ; ... currently active ...
+0029 ---- 68ab                         ld          R6, [#fwCtrlExt/bvTaskInitializeReq]
+002a ---- fd0e                         or          R7, R6
+                                       ; ... and inactive ...
+002b ---- 68ad                         ld          R6, [#fwCtrlExt/bvTaskTerminateReq]
+002c ---- ed92                         inv         R6
+002d ---- fd06                         and         R7, R6
+002e ---- 7ca9                         st          R7, [#fwCtrlExt/bvActiveTasks]
+
+                                       ; We're READY for another request
+002f ---- 6440                         iobset      #IOB_EVCTL_SWEV_READY, [#IOP_EVCTL_SWEVSET]
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+0030 ---- 047f                         jmp         PowerDownSequence;
+
+               /handleReq:
+                                       ; Restore the task ID, and load the function pointer (here to avoid pipeline hazard)
+0031 ---- 78a2                         ld          R7, [#fwCtrlInt/taskId]
+0032 ---- 8f1f                         ld          R0, [R7+R0]
+
+                                       ; Skip this request?
+0033 ---- ed8f                         lsr         R6, R7
+0034 ---- ec01                         tst         R6, #0x0001
+0035 ---- be01                         bnz         /noSkip
+0036 ---- adb7                             rts
+               /noSkip:
+                                       ; Make the call by jump, with return (rts) in the "called" function
+0037 ---- 8db7                         jmp         R0
+
+
+
+
+               EventManTrigVector:
+                                       ; Clear wake-up event
+0038 ---- 755b                         iobset      #IOB_SYSIF_WUFLAGS_SW_WU1, [#IOP_SYSIF_WUFLAGSCLR]
+0039 ---- 555b                         iobclr      #IOB_SYSIF_WUFLAGS_SW_WU1, [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; Reconfigure the programmable wake-up, and trigger it
+003a ---- 78a7                         ld          R7, [#fwCtrlInt/progwucfgManTrigReg]
+003b ---- 60bf                         ld          R6, #(BV_SYSIF_PROGWUCFG_POL | SYSIF_PROGWUCFG_SRC_NO_EVENT)
+003c ---- ef27                         out         R6, [R7]
+003d ---- e240                         or          R6, #BV_SYSIF_PROGWUCFG_EN
+003e ---- ef27                         out         R6, [R7]
+
+                                       ; Indicate completion
+003f ---- 7000                         ld          R7, #0x0000
+0040 ---- 7ca7                         st          R7, [#fwCtrlInt/progwucfgManTrigReg]
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+0041 ---- 047f                         jmp         PowerDownSequence;
+
+
+
+
+               AonRtcCh2Vector:
+                                       ; Start clearing the RTC event
+0042 ---- 6477                         iobset      #0, [#IOP_SYSIF_RTCEVCLR]
+
+                                       ; For each task (R0 is the current task ID) ...
+0043 ---- 0000                         ld          R0, #0
+               /loop:
+                                           ; ... that is active ...
+0044 ---- 18a9                             ld          R1, [#fwCtrlExt/bvActiveTasks]
+0045 ---- 9d88                             lsr         R1, R0
+0046 ---- 9c01                             tst         R1, #0x0001
+0047 ---- b60e                             bz          /skip
+
+                                               ; Fetch number of RTC intervals until next execution
+0048 ---- 109e                                 ld          R1, #pFwTaskExecuteScheduleTable
+0049 ---- af19                                 ld          R2, [R1+R0]
+
+                                               ; If not already 0, decrement and store. If then 0 ...
+004a ---- aa00                                 cmp         R2, #0
+004b ---- b60a                                 beq         /skip
+004c ---- a8ff                                 add         R2, #-1
+004d ---- af39                                 st          R2, [R1+R0]
+004e ---- be07                                 bnz         /skip
+
+                                                   ; ... execute the task
+004f ---- 0ca2                                     st          R0, [#fwCtrlInt/taskId]
+0050 8600 88a0                                     add         R0, #pFwTaskExecuteFuncTable
+0052 ---- 8f08                                     ld          R0, [R0]
+                                                   ; Insert NOP to avoid pipeline hazard
+0053 ---- fd47                                     nop
+0054 ---- 9db7                                     jsr         R0
+0055 ---- 08a2                                     ld          R0, [#fwCtrlInt/taskId]
+               /skip:
+                                           ; Move on to the next task
+0056 ---- 8801                             add         R0, #1
+
+0057 ---- 8a01                         cmp         R0, #TASK_COUNT
+0058 ---- beeb                         bneq        /loop
+
+                                       ; Wait for the RTC CH2 event clearing to finish
+0059 ---- 254f /waitOnRtcEvClr:        iobtst      #IOB_EVCTL_EVSTAT2L_AON_RTC_CH2, [#IOP_EVCTL_EVSTAT2L]
+005a ---- aefe                         biob1       /waitOnRtcEvClr
+
+                                       ; Clear event edge detector
+005b ---- 645b                         iobset      #IOB_SYSIF_WUFLAGS_PROG_WU0, [#IOP_SYSIF_WUFLAGSCLR]
+005c ---- 445b                         iobclr      #IOB_SYSIF_WUFLAGS_PROG_WU0, [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; End clearing the RTC event
+005d ---- 4477                         iobclr      #0, [#IOP_SYSIF_RTCEVCLR]
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+005e ---- 047f                         jmp         PowerDownSequence;
+
+
+
+
+               Event0Vector:
+                                       ; Disable and clear wake-up event
+005f ---- 5656                         iobclr      #IOB_SYSIF_PROGWUCFG_EN,        [#IOP_SYSIF_PROGWU1CFG] ; Disable source
+0060 ---- 655b                         iobset      #IOB_SYSIF_WUFLAGS_PROG_WU1,    [#IOP_SYSIF_WUFLAGSCLR] ; Clear edge detector
+0061 ---- 455b                         iobclr      #IOB_SYSIF_WUFLAGS_PROG_WU1,    [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; Set the task ID and active event index
+0062 ---- 0000                         ld          R0, #0
+0063 ---- 0ca2                         st          R0, [#fwCtrlInt/taskId]
+0064 ---- 0001                         ld          R0, #(1 << 0)
+0065 ---- 0ca3                         st          R0, [#fwCtrlInt/bvActiveEvent]
+
+                                       ; Jump to the event task code
+0066 ---- 1416                         jsr         FwEmptyFunc
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+0067 ---- 047f                         jmp         PowerDownSequence;
+
+
+
+
+               Event1Vector:
+                                       ; Disable and clear wake-up event
+0068 ---- 5657                         iobclr      #IOB_SYSIF_PROGWUCFG_EN,        [#IOP_SYSIF_PROGWU2CFG] ; Disable source
+0069 ---- 665b                         iobset      #IOB_SYSIF_WUFLAGS_PROG_WU2,    [#IOP_SYSIF_WUFLAGSCLR] ; Clear edge detector
+006a ---- 465b                         iobclr      #IOB_SYSIF_WUFLAGS_PROG_WU2,    [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; Set the task ID and active event index
+006b ---- 0000                         ld          R0, #0
+006c ---- 0ca2                         st          R0, [#fwCtrlInt/taskId]
+006d ---- 0002                         ld          R0, #(1 << 1)
+006e ---- 0ca3                         st          R0, [#fwCtrlInt/bvActiveEvent]
+
+                                       ; Jump to the event task code
+006f ---- 1416                         jsr         FwEmptyFunc
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+0070 ---- 047f                         jmp         PowerDownSequence;
+
+
+
+
+               Event2Vector:
+                                       ; Disable and clear wake-up event
+0071 ---- 5658                         iobclr      #IOB_SYSIF_PROGWUCFG_EN,        [#IOP_SYSIF_PROGWU3CFG] ; Disable source
+0072 ---- 675b                         iobset      #IOB_SYSIF_WUFLAGS_PROG_WU3,    [#IOP_SYSIF_WUFLAGSCLR] ; Clear edge detector
+0073 ---- 475b                         iobclr      #IOB_SYSIF_WUFLAGS_PROG_WU3,    [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; Set the task ID and active event index
+0074 ---- 0000                         ld          R0, #0
+0075 ---- 0ca2                         st          R0, [#fwCtrlInt/taskId]
+0076 ---- 0004                         ld          R0, #(1 << 2)
+0077 ---- 0ca3                         st          R0, [#fwCtrlInt/bvActiveEvent]
+
+                                       ; Jump to the event task code
+0078 ---- 1416                         jsr         FwEmptyFunc
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+0079 ---- 047f                         jmp         PowerDownSequence;
+
+
+
+
+               TaskAlertAckVector:
+                                       ; Clear wake-up event
+007a ---- 765b                         iobset      #IOB_SYSIF_WUFLAGS_SW_WU2, [#IOP_SYSIF_WUFLAGSCLR]
+007b ---- 565b                         iobclr      #IOB_SYSIF_WUFLAGS_SW_WU2, [#IOP_SYSIF_WUFLAGSCLR]
+
+                                       ; Re-enable generation of ALERT interrupts
+007c 86ff 03ff                         ld          R0, #0xFFFF
+007e ---- 0ca5                         st          R0, [#fwCtrlInt/alertGenMask]
+
+                                       ; Generate an ALERT interrupt (if requested) and return to sleep
+                                       ; -> Fall through
+
+
+
+
+               PowerDownSequence:
+                                       ; Let wake-up events propagate to the AON domain
+007f ---- 645c                         iobset      #0, [#IOP_SYSIF_WUGATE]
+
+                                       ; Do we have any ALERT-generating flags pending?
+0080 ---- 78a4                         ld          R7, [#fwCtrlInt/bvTaskIoAlert]
+
+                                       ; Skip if the last I/O ALERT interrupt has not been acknowledged
+0081 ---- 68a5                         ld          R6, [#fwCtrlInt/alertGenMask]
+0082 ---- ed37                         tst         R6, R7
+0083 ---- b605                         bz          /skipAlertGen
+
+                                           ; Transfer I/O flags from internal to external
+0084 ---- 0000                             ld          R0, #0
+0085 ---- 0ca4                             st          R0, [#fwCtrlInt/bvTaskIoAlert]
+0086 ---- 7caa                             st          R7, [#fwCtrlExt/bvTaskIoAlert]
+
+                                           ; Generate the ALERT interrupt, and clear the generation mask
+0087 ---- 6540                             iobset      #IOB_EVCTL_SWEV_ALERT, [#IOP_EVCTL_SWEVSET]
+0088 ---- 0ca5                             st          R0, [#fwCtrlInt/alertGenMask]
+               /skipAlertGen:
+                                       ; Set initial power mode for next executed vector
+                                       ; -> Only at initialization
+
+                                       ; If there are no unacknowledged ALERTs and no vectors pending ...
+0089 ---- 78a5                         ld          R7, [#fwCtrlInt/alertGenMask]
+008a ---- 68a6                         ld          R6, [#fwCtrlInt/alertCanPdAuxMask]
+008b ---- fd0e                         or          R7, R6
+008c ---- f801                         add         R7, #1 ; 0xFFFF -> 0x0000
+008d ---- e95a                         in          R6, [#IOP_SYSIF_WUFLAGS]
+008e ---- fd0e                         or          R7, R6
+008f ---- be01                         bnz         /noPowerDown
+
+                                           ; Assert the power-down request
+0090 ---- 6553                             iobset      #IOB_SYSIF_OPMODE_PD, [#IOP_SYSIF_OPMODEREQ]
+               /noPowerDown:
+                                       ; Sleep until the next event
+0091 ---- bdb7 sleepInstr:             sleep
+
+
+
+
+               PwrRequestAndWaitForActiveMode:
+                                       ; Update Reference DAC clock divider before entering active mode
+0092 ---- 700b                         ld          R7, #((ACTIVE_MODE_SCE_CLK_FREQ_MHZ / 2) - 1)
+0093 ---- fb96                         out         R7, [#IOP_ANAIF_DACSMPLCFG0]
+
+                                       ; Deassert the low-power request
+0094 ---- 4453                         iobclr      #IOB_SYSIF_OPMODE_LP, [#IOP_SYSIF_OPMODEREQ]
+
+                                       ; Wait for it to take effect
+0095 ---- 2454 /waitForOpmodeAck:      iobtst      #IOB_SYSIF_OPMODE_LP, [#IOP_SYSIF_OPMODEACK]
+0096 ---- aefe                         biob1       /waitForOpmodeAck
+
+                                       ; Done
+0097 ---- adb7                         rts
+
+
+
+
+               PwrRequestAndWaitForLowPowerMode:
+                                       ; Assert the low-power request
+0098 ---- 6453                         iobset      #IOB_SYSIF_OPMODE_LP, [#IOP_SYSIF_OPMODEREQ]
+
+                                       ; Wait for it to take effect
+0099 ---- 2454 /waitForOpmodeAck:      iobtst      #IOB_SYSIF_OPMODE_LP, [#IOP_SYSIF_OPMODEACK]
+009a ---- a6fe                         biob0       /waitForOpmodeAck
+
+                                       ; Update Reference DAC clock divider after leaving active mode
+009b ---- 7000                         ld          R7, #(1 - 1)
+009c ---- fb96                         out         R7, [#IOP_ANAIF_DACSMPLCFG0]
+
+                                       ; Done
+009d ---- adb7                         rts
+
+
+
+
+               ; RTC ticks until next execution, one word for each task
+               pFwTaskExecuteScheduleTable:
+009e ---- 0000                         dw          #0
+
+               ; Task code function pointers for each task code block, one word for each task
+               pFwTaskInitializeFuncTable:
+009f ---- 00cd                         dw          #imuv6SensorTask/initialize
+               pFwTaskExecuteFuncTable:
+00a0 ---- 0262                         dw          #imuv6SensorTask/execute
+               pFwTaskTerminateFuncTable:
+00a1 ---- 065d                         dw          #imuv6SensorTask/terminate
+
+               ; Run-time logging log requests and masks, one bit for each struct, one word for each task
+               pRtlTaskLogReqTable:
+               ; (Run-time logging is not used in this project)
+               pRtlTaskLogMaskTable:
+               ; (Run-time logging is not used in this project)
+
+
+               ; Internal control data
+               fwCtrlInt:
+00a2 ---- 0000 /taskId:                dw          #0      ; ID of the currently running task
+00a3 ---- 0000 /bvActiveEvent:         dw          #0      ; Bit-vector indicating index of the currently active event trigger
+00a4 ---- 0000 /bvTaskIoAlert:         dw          #0x0000 ; LSB = Normal data exchange, MSB = Overflow or underflow
+00a5 ---- ffff /alertGenMask:          dw          #0xFFFF ; Can generate an ALERT interrupt now? (0xFFFF = yes, 0x0000 = no)
+00a6 ---- 0000 /alertCanPdAuxMask:     dw          #0x0000 ; Can power down AUX domain after ALERT interrupt generation? (0xFFFF = yes, 0x0000 = no)
+00a7 ---- 0000 /progwucfgManTrigReg:   dw          #0x0000 ; Address of PROGWUnCFG register to be triggered manually by EventManTriggerVector
+00a8 ---- 0000 /rtlStructLockReq:      dw          #0x0000 ; Run-time logging struct lock request (0=idle -> 1=requested -> 2=ready -> access -> 0=idle)
+
+               ; External control data, shared with the driver
+               fwCtrlExt:
+00a9 ---- 0000 /bvActiveTasks:         dw          #0x0000 ; Indicates which tasks are currently active
+00aa ---- 0000 /bvTaskIoAlert:         dw          #0x0000 ; LSB = Normal data exchange, MSB = Overflow or underflow
+00ab ---- 0000 /bvTaskInitializeReq:   dw          #0x0000 ; Requests tasks to start
+00ac ---- 0000 /bvTaskExecuteReq:      dw          #0x0000 ; Requests tasks to execute once immediately
+00ad ---- 0000 /bvTaskTerminateReq:    dw          #0x0000 ; Requests tasks to stop
+
+
+               .segment end "Framework"
+
+
+               fwTaskDataStructures:
+               .segment begin "Task: IMUv6 Sensor Task"
+               imuv6SensorTask/cfg:
+               imuv6SensorTask/cfg/batterySamplingInterval:
+00ae ---- 0064                         dw          #100
+               imuv6SensorTask/cfg/resetSensors:
+00af ---- 0000                         dw          #0
+               imuv6SensorTask/cfg/sensorConfig:
+00b0 ---- 0000                         dw          #0
+               imuv6SensorTask/cfg/sensorConfigOld:
+00b1 ---- 0000                         dw          #0
+               imuv6SensorTask/input:
+               imuv6SensorTask/output:
+               imuv6SensorTask/output/adcValue:
+00b2 ---- 0000                         dw          #0
+               imuv6SensorTask/output/adxl355axis:
+00b3 ---- 0000                         dw          #0
+00b4 ---- 0000                         dw          #0
+00b5 ---- 0000                         dw          #0
+00b6 ---- 0000                         dw          #0
+00b7 ---- 0000                         dw          #0
+00b8 ---- 0000                         dw          #0
+               imuv6SensorTask/output/batteryCapacity:
+00b9 ---- 0000                         dw          #0
+               imuv6SensorTask/output/batteryCapacityFull:
+00ba ---- 0000                         dw          #0
+               imuv6SensorTask/output/batteryCurrent:
+00bb ---- 0000                         dw          #0
+               imuv6SensorTask/output/batteryCurrentAverage:
+00bc ---- 0000                         dw          #0
+               imuv6SensorTask/output/batteryStateOfCharge:
+00bd ---- 0000                         dw          #0
+               imuv6SensorTask/output/batteryVoltage:
+00be ---- 0000                         dw          #0
+               imuv6SensorTask/output/bmi160accelaxis:
+00bf ---- 0000                         dw          #0
+00c0 ---- 0000                         dw          #0
+00c1 ---- 0000                         dw          #0
+               imuv6SensorTask/output/bmi160gyroaxis:
+00c2 ---- 0000                         dw          #0
+00c3 ---- 0000                         dw          #0
+00c4 ---- 0000                         dw          #0
+               imuv6SensorTask/output/mmc34160pjaxis:
+00c5 ---- 0000                         dw          #0
+00c6 ---- 0000                         dw          #0
+00c7 ---- 0000                         dw          #0
+               imuv6SensorTask/output/pressure:
+00c8 ---- 0000                         dw          #0
+               imuv6SensorTask/output/temp:
+00c9 ---- 0000                         dw          #0
+               imuv6SensorTask/state:
+               imuv6SensorTask/state/batterySamplingWaitCount:
+00ca ---- 0000                         dw          #0
+               imuv6SensorTask/state/i2cStatus:
+00cb ---- 0000                         dw          #0
+               imuv6SensorTask/state/status:
+00cc ---- 0000                         dw          #0
+               .segment end "Task: IMUv6 Sensor Task"
+
+
+               .segment begin "Task: IMUv6 Sensor Task"
+               imuv6SensorTask/initialize:
+               ;? macro i2cWriteValue(value, addr, register) {
+               ;?     i2cStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_WRITE);
+               ;?     i2cTx(register);
+               ;?     i2cTx(value);
+               ;?     i2cStop();
+               ;? }
+               ;?
+               ;? macro i2cWriteWord(value, addr, register) {
+               ;?     i2cStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_WRITE);
+               ;?     i2cTx(register);
+               ;?     i2cTx(value);
+               ;?     i2cTx((value) >> 8);
+               ;?     i2cStop();
+               ;? }
+               ;?
+               ;? macro spiWriteReg(addr, value) {
+               ;?     spiBegin(AUXIO_SPI_CSN_ADXL355);
+               ;?     //spiTx8bit(ACCEL_SPI_WRITE);
+               ;?     spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+               ;?     spiTx8bit(value);
+               ;?     spiEnd(AUXIO_SPI_CSN_ADXL355);
+               ;? }
+               ;?
+               ;? macro i2cReadWord(result, addr, register) {
+               ;?     i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+               ;? }
+               ;?
+               ;?
+               ;? //ADXL355 SPI init
+               ;? //=======================================
+               ;?
+               ;? // Configure the SPI peripheral
+               ;? spiCfg(SPI_POL0_PHA0, 1);
+00cd ---- 0000                         ld          R0, #(((1 - 1) << IOB_SPIM_SPIMCFG_DIV) | 0)
+00ce ---- 8b00                         out         R0, [#IOP_SPIM_SPIMCFG]
+               ;?
+               ;?
+               ;? //6-DOF Sensor BMI160
+               ;? //=======================================
+               ;?
+               ;?
+               ;? //Barometer and Temperature
+               ;? //=======================================
+               ;?
+               ;? //Fuel Gauge MAX17055
+               ;? //=======================================
+               ;? // no global init
+               ;?
+               ;? U16 value;
+               ;? i2cReadWord(value, MAX17055_I2C_ADDR, 0x00); // Read Status register
+               ;? >   i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+00cf ---- 5000                         ld          R5, #0
+00d0 ---- 68cb                         ld          R6, [#imuv6SensorTask/state/i2cStatus]
+00d1 ---- 70d7                         ld          R7, #/id0208
+00d2 8606 7e61                         st          R7, [#i2cDeviceCommonReturn]
+00d4 ---- 706c                         ld          R7, #(108 | 0)
+00d5 8606 0662                         jmp         I2cDeviceReadReg16LsbFirst
+               /id0208:
+00d7 8606 0a5e                         ld          R0, [#i2cDeviceCommonBackupR0]
+00d9 ---- 6ccb                         st          R6, [#imuv6SensorTask/state/i2cStatus]
+00da ---- 8d47                         ld          R0, R7
+               ;? if (value & 0x0002) { // Check if power on reset bit StatusPOR is set
+00db ---- 8c02                         tst         R0, #2
+00dc ---- be01                         bnz         /br0000 ; Repaired out-of-range bz
+00dd ---- 065c                         jmp         /id0214
+               /br0000:
+               ;?
+               ;?     // After power-up, wait for the MAX17055 to complete its startup operations.
+               ;?     do {
+               /id0216:
+               ;?         i2cReadWord(value, MAX17055_I2C_ADDR, 0x3D); // read FSTAT
+               ;?         >   i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+00de ---- 503d                                 ld          R5, #61
+00df ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+00e0 ---- 70e6                                 ld          R7, #/id0217
+00e1 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+00e3 ---- 706c                                 ld          R7, #(108 | 0)
+00e4 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0217:
+00e6 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+00e8 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+00e9 ---- 8d47                                 ld          R0, R7
+               ;?         fwDelayUs(10000);
+00ea 8627 1310                                 ld          R1, #10000
+00ec ---- 9801                                 add         R1, #1
+00ed ---- 9b49                                 out         R1, [#IOP_EVCTL_PROGDLY]
+00ee ---- 8db1                                 wev1        #WEVSEL_PROG_DLY
+               ;?     } while (value & 0x01); //do not continue until FSTAT.DNR == 0
+00ef ---- 8c01                             tst         R0, #1
+00f0 ---- beed                             bnz         /id0216
+               ;?
+               ;?
+               ;?     // Exit hibernation mode
+               ;?     U16 HibCFG;
+               ;?     i2cReadWord(HibCFG, MAX17055_I2C_ADDR, 0xBA); //Store original HibCFG value
+               ;?     >   i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+00f1 ---- 50ba                             ld          R5, #186
+00f2 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+00f3 ---- 70f9                             ld          R7, #/id0225
+00f4 8606 7e61                             st          R7, [#i2cDeviceCommonReturn]
+00f6 ---- 706c                             ld          R7, #(108 | 0)
+00f7 8606 0662                             jmp         I2cDeviceReadReg16LsbFirst
+               /id0225:
+00f9 8606 0a5e                             ld          R0, [#i2cDeviceCommonBackupR0]
+00fb ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+00fc ---- 9d47                             ld          R1, R7
+               ;?     i2cWriteWord(0x90, MAX17055_I2C_ADDR, 0x60); // Exit Hibernate Mode step 1
+               ;?     >   i2cStart();
+00fd ---- 6000                             ld          R6, #0x0000
+00fe 8606 1690                             jsr         I2cStart
+0100 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0101 ---- 706c                             ld          R7, #108
+0102 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0103 8606 16a5                             jsr         I2cTxByte
+0105 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0106 ---- 7060                             ld          R7, #96
+0107 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0108 8606 16a5                             jsr         I2cTxByte
+010a ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+010b ---- 7090                             ld          R7, #144
+010c ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+010d 8606 16a5                             jsr         I2cTxByte
+010f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+0110 ---- 7000                             ld          R7, #0
+0111 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0112 8606 16a5                             jsr         I2cTxByte
+0114 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0115 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0116 8606 1696                             jsr         I2cStop
+0118 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     i2cWriteWord(0x00, MAX17055_I2C_ADDR, 0xBA); // Exit Hibernate Mode step 2
+               ;?     >   i2cStart();
+0119 ---- 6000                             ld          R6, #0x0000
+011a 8606 1690                             jsr         I2cStart
+011c ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+011d ---- 706c                             ld          R7, #108
+011e ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+011f 8606 16a5                             jsr         I2cTxByte
+0121 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0122 ---- 70ba                             ld          R7, #186
+0123 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0124 8606 16a5                             jsr         I2cTxByte
+0126 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0127 ---- 7000                             ld          R7, #0
+0128 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0129 8606 16a5                             jsr         I2cTxByte
+012b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+012c ---- 7000                             ld          R7, #0
+012d ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+012e 8606 16a5                             jsr         I2cTxByte
+0130 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0131 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0132 8606 1696                             jsr         I2cStop
+0134 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     i2cWriteWord(0x00, MAX17055_I2C_ADDR, 0x60); // Exit Hibernate Mode step 3
+               ;?     >   i2cStart();
+0135 ---- 6000                             ld          R6, #0x0000
+0136 8606 1690                             jsr         I2cStart
+0138 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0139 ---- 706c                             ld          R7, #108
+013a ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+013b 8606 16a5                             jsr         I2cTxByte
+013d ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+013e ---- 7060                             ld          R7, #96
+013f ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0140 8606 16a5                             jsr         I2cTxByte
+0142 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0143 ---- 7000                             ld          R7, #0
+0144 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0145 8606 16a5                             jsr         I2cTxByte
+0147 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+0148 ---- 7000                             ld          R7, #0
+0149 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+014a 8606 16a5                             jsr         I2cTxByte
+014c ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+014d ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+014e 8606 1696                             jsr         I2cStop
+0150 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     // Initialize battery model
+               ;?     i2cWriteWord(BATTERY_DESIGNED_CAP, MAX17055_I2C_ADDR, 0x18); // Write DesignCap
+               ;?     >   i2cStart();
+0151 ---- 6000                             ld          R6, #0x0000
+0152 8606 1690                             jsr         I2cStart
+0154 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0155 ---- 706c                             ld          R7, #108
+0156 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0157 8606 16a5                             jsr         I2cTxByte
+0159 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+015a ---- 7018                             ld          R7, #24
+015b ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+015c 8606 16a5                             jsr         I2cTxByte
+015e ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+015f ---- 7078                             ld          R7, #120
+0160 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0161 8606 16a5                             jsr         I2cTxByte
+0163 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+0164 ---- 7000                             ld          R7, #0
+0165 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0166 8606 16a5                             jsr         I2cTxByte
+0168 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0169 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+016a 8606 1696                             jsr         I2cStop
+016c ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     i2cWriteWord(BATTERY_DESIGNED_CAP_DIV_BY_32, MAX17055_I2C_ADDR, 0x45); //Write dQAcc
+               ;?     >   i2cStart();
+016d ---- 6000                             ld          R6, #0x0000
+016e 8606 1690                             jsr         I2cStart
+0170 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0171 ---- 706c                             ld          R7, #108
+0172 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0173 8606 16a5                             jsr         I2cTxByte
+0175 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0176 ---- 7045                             ld          R7, #69
+0177 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0178 8606 16a5                             jsr         I2cTxByte
+017a ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+017b ---- 7003                             ld          R7, #3
+017c ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+017d 8606 16a5                             jsr         I2cTxByte
+017f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+0180 ---- 7000                             ld          R7, #0
+0181 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0182 8606 16a5                             jsr         I2cTxByte
+0184 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0185 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0186 8606 1696                             jsr         I2cStop
+0188 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     i2cWriteWord(BATTERY_CHARGE_TERMINATION_REG_VALUE, MAX17055_I2C_ADDR, 0x1E); // Write IchgTerm
+               ;?     >   i2cStart();
+0189 ---- 6000                             ld          R6, #0x0000
+018a 8606 1690                             jsr         I2cStart
+018c ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+018d ---- 706c                             ld          R7, #108
+018e ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+018f 8606 16a5                             jsr         I2cTxByte
+0191 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0192 ---- 701e                             ld          R7, #30
+0193 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0194 8606 16a5                             jsr         I2cTxByte
+0196 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0197 ---- 700f                             ld          R7, #15
+0198 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0199 8606 16a5                             jsr         I2cTxByte
+019b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+019c ---- 7000                             ld          R7, #0
+019d ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+019e 8606 16a5                             jsr         I2cTxByte
+01a0 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+01a1 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01a2 8606 1696                             jsr         I2cStop
+01a4 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     i2cWriteWord(BATTERY_EMPTY_VOLTAGE_AND_BATTERY_RECOVERY_VOLTAGE_REGISTER_VALUE, MAX17055_I2C_ADDR, 0x3A); //VEmpty
+               ;?     >   i2cStart();
+01a5 ---- 6000                             ld          R6, #0x0000
+01a6 8606 1690                             jsr         I2cStart
+01a8 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+01a9 ---- 706c                             ld          R7, #108
+01aa ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01ab 8606 16a5                             jsr         I2cTxByte
+01ad ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+01ae ---- 703a                             ld          R7, #58
+01af ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01b0 8606 16a5                             jsr         I2cTxByte
+01b2 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+01b3 8696 7261                             ld          R7, #-27039
+01b5 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01b6 8606 16a5                             jsr         I2cTxByte
+01b8 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+01b9 ---- 7096                             ld          R7, #150
+01ba ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01bb 8606 16a5                             jsr         I2cTxByte
+01bd ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+01be ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01bf 8606 1696                             jsr         I2cStop
+01c1 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Only use integer portion of dQAcc=int(DesignCap/32) in the calculation of dPAcc to avoid quantization of FullCapNom
+               ;?     i2cWriteWord(BATTERY_DESIGNED_CAP_DIV_BY_32*(44138/BATTERY_DESIGNED_CAP), MAX17055_I2C_ADDR, 0x46); //Write dPAcc
+               ;?     >   i2cStart();
+01c2 ---- 6000                             ld          R6, #0x0000
+01c3 8606 1690                             jsr         I2cStart
+01c5 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+01c6 ---- 706c                             ld          R7, #108
+01c7 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01c8 8606 16a5                             jsr         I2cTxByte
+01ca ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+01cb ---- 7046                             ld          R7, #70
+01cc ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01cd 8606 16a5                             jsr         I2cTxByte
+01cf ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+01d0 8604 704d                             ld          R7, #1101
+01d2 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01d3 8606 16a5                             jsr         I2cTxByte
+01d5 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+01d6 ---- 7004                             ld          R7, #4
+01d7 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01d8 8606 16a5                             jsr         I2cTxByte
+01da ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+01db ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01dc 8606 1696                             jsr         I2cStop
+01de ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     i2cWriteWord(0x8000, MAX17055_I2C_ADDR, 0xDB) ; // Write ModelCFG
+               ;?     >   i2cStart();
+01df ---- 6000                             ld          R6, #0x0000
+01e0 8606 1690                             jsr         I2cStart
+01e2 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+01e3 ---- 706c                             ld          R7, #108
+01e4 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01e5 8606 16a5                             jsr         I2cTxByte
+01e7 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+01e8 ---- 70db                             ld          R7, #219
+01e9 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01ea 8606 16a5                             jsr         I2cTxByte
+01ec ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+01ed 8680 7000                             ld          R7, #-32768
+01ef ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01f0 8606 16a5                             jsr         I2cTxByte
+01f2 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+01f3 ---- 7080                             ld          R7, #128
+01f4 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01f5 8606 16a5                             jsr         I2cTxByte
+01f7 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+01f8 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01f9 8606 1696                             jsr         I2cStop
+01fb ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Poll ModelCFG.Refresh(highest bit), proceed to Step 4 when ModelCFG.Refresh = 0.
+               ;?     do {
+               /id0411:
+               ;?         i2cReadWord(value, MAX17055_I2C_ADDR, 0xDB); // read FSTAT
+               ;?         >   i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+01fc ---- 50db                                 ld          R5, #219
+01fd ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+01fe 8602 7205                                 ld          R7, #/id0412
+0200 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+0202 ---- 706c                                 ld          R7, #(108 | 0)
+0203 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0412:
+0205 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+0207 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0208 ---- 8d47                                 ld          R0, R7
+               ;?         fwDelayUs(10000);
+0209 8627 5310                                 ld          R5, #10000
+020b ---- d801                                 add         R5, #1
+020c ---- db49                                 out         R5, [#IOP_EVCTL_PROGDLY]
+020d ---- 8db1                                 wev1        #WEVSEL_PROG_DLY
+               ;?     } while (value & 0x8000); // Do not continue until ModelCFG.Refresh == 0.
+020e 8680 8c00                             tst         R0, #32768
+0210 ---- beeb                             bnz         /id0411
+               ;?
+               ;?     i2cWriteWord(HibCFG, MAX17055_I2C_ADDR, 0xBA) ; // Restore Original HibCFG value
+               ;?     >   i2cStart();
+0211 ---- 6000                             ld          R6, #0x0000
+0212 8606 1690                             jsr         I2cStart
+0214 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0215 ---- 706c                             ld          R7, #108
+0216 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0217 8606 16a5                             jsr         I2cTxByte
+0219 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+021a ---- 70ba                             ld          R7, #186
+021b ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+021c 8606 16a5                             jsr         I2cTxByte
+021e ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+021f ---- fd41                             ld          R7, R1
+0220 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0221 8606 16a5                             jsr         I2cTxByte
+0223 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+0224 ---- fd41                             ld          R7, R1
+0225 ---- fda8                             lsr         R7, #8
+0226 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0227 8606 16a5                             jsr         I2cTxByte
+0229 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+022a ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+022b 8606 1696                             jsr         I2cStop
+022d ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     i2cReadWord(value, MAX17055_I2C_ADDR, 0x00); // Read Status
+               ;?     >   i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+022e ---- 5000                             ld          R5, #0
+022f ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0230 8602 7237                             ld          R7, #/id0440
+0232 8606 7e61                             st          R7, [#i2cDeviceCommonReturn]
+0234 ---- 706c                             ld          R7, #(108 | 0)
+0235 8606 0662                             jmp         I2cDeviceReadReg16LsbFirst
+               /id0440:
+0237 8606 0a5e                             ld          R0, [#i2cDeviceCommonBackupR0]
+0239 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+023a ---- 8d47                             ld          R0, R7
+               ;?     i2cWriteWord(value & 0xFFFD, MAX17055_I2C_ADDR, 0x00);
+               ;?     >   i2cStart();
+023b ---- 6000                             ld          R6, #0x0000
+023c 8606 1690                             jsr         I2cStart
+023e ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+023f ---- 706c                             ld          R7, #108
+0240 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0241 8606 16a5                             jsr         I2cTxByte
+0243 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0244 ---- 7000                             ld          R7, #0
+0245 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0246 8606 16a5                             jsr         I2cTxByte
+0248 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0249 ---- fd40                             ld          R7, R0
+024a 86ff f0fd                             and         R7, #65533
+024c ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+024d 8606 16a5                             jsr         I2cTxByte
+024f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((value) >> 8);
+0250 ---- fd40                             ld          R7, R0
+0251 86ff f0fd                             and         R7, #65533
+0253 ---- fda8                             lsr         R7, #8
+0254 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0255 8606 16a5                             jsr         I2cTxByte
+0257 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0258 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0259 8606 1696                             jsr         I2cStop
+025b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;? } else { //then do Steps 2–3.}
+               ;? }
+               /id0214:
+               ;? //exposed pad analog reading
+               ;? //=======================================
+               ;? // Select ADC input
+               ;? adcSelectGpioInput(AUXIO_A_ADC_READ);
+025c ---- 7015                         ld          R7, #21
+025d 8607 1701                         jsr         AdccompbSelectGpioInput
+               ;?
+               ;?
+               ;? // Schedule the first execution
+               ;? fwScheduleTask(1);
+025f ---- 0001                         ld          R0, #1
+0260 ---- 0c9e                         st          R0, [#(pFwTaskExecuteScheduleTable + 0)]
+               imuv6SensorTask/initializeDone:
+0261 ---- adb7                         rts
+
+
+
+
+               imuv6SensorTask/execute:
+               ;? macro i2cReadValue(result, addr, register) {
+               ;?     i2cStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_WRITE);
+               ;?     i2cTx(register);
+               ;?     i2cRepeatedStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_READ);
+               ;?     i2cRxNack(result);
+               ;?     i2cStop();
+               ;? }
+               ;?
+               ;? macro i2cReadHighValue(result, addr, register) {
+               ;?     i2cStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_WRITE);
+               ;?     i2cTx(register);
+               ;?     i2cRepeatedStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_READ);
+               ;?     i2cRxAck(result); //Dummy read to skip to high byte
+               ;?     i2cRxNack(result);
+               ;?     i2cStop();
+               ;? }
+               ;?
+               ;? macro i2cWriteValue(value, addr, register) {
+               ;?     i2cStart();
+               ;?     i2cTx((addr << 1) | I2C_OP_WRITE);
+               ;?     i2cTx(register);
+               ;?     i2cTx(value);
+               ;?     i2cStop();
+               ;? }
+               ;?
+               ;? macro spiWriteReg(addr, value) {
+               ;?     spiBegin(AUXIO_SPI_CSN_ADXL355);
+               ;?     //spiTx8bit(ACCEL_SPI_WRITE);
+               ;?     spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+               ;?     spiTx8bit(value);
+               ;?     spiEnd(AUXIO_SPI_CSN_ADXL355);
+               ;? }
+               ;?
+               ;? U16 acc = 0;
+0262 ---- 1000                         ld          R1, #0
+               ;? U16 sensorConfigStartBits = 0;
+               ;? U16 sensorConfigStopBits = 0;
+               ;?
+               ;?
+               ;? /////////////////////////////////////////////////////////////////
+               ;? // Read data from enabled sensors and write to output struct
+               ;? /////////////////////////////////////////////////////////////////
+               ;?
+               ;?
+               ;? //Magnetometer MMC34160PJ
+               ;? //=======================================
+               ;?
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_MAGNETOMETER_BV) {
+0263 ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+0264 ---- 8c08                         tst         R0, #8
+0265 ---- b66c                         bz          /id0487
+               ;?     U16 rdy = 0;
+               ;?
+               ;?     i2cReadValue(rdy, MMC34160PJ_I2C_ADDR, 0x06);
+               ;?     >   i2cStart();
+0266 ---- 6000                             ld          R6, #0x0000
+0267 8606 1690                             jsr         I2cStart
+0269 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+026a ---- 7060                             ld          R7, #96
+026b ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+026c 8606 16a5                             jsr         I2cTxByte
+026e ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+026f ---- 7006                             ld          R7, #6
+0270 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0271 8606 16a5                             jsr         I2cTxByte
+0273 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cRepeatedStart();
+0274 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0275 8606 1687                             jsr         I2cRepeatedStart
+0277 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_READ);
+0278 ---- 7061                             ld          R7, #97
+0279 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+027a 8606 16a5                             jsr         I2cTxByte
+027c ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cRxNack(result);
+027d ---- 7001                             ld          R7, #0x0001
+027e ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+027f 8606 16c9                             jsr         I2cRxByte
+0281 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0282 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0283 8606 1696                             jsr         I2cStop
+0285 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     U16 mag = 0;
+               ;?
+               ;?     if (rdy & 0x01) {
+0286 ---- fc01                             tst         R7, #1
+0287 ---- b64a                             bz          /id0512
+               ;?
+               ;?         for (U16 n = 0; n < MMC34160PJ_AXIS_COUNT; n++) {
+0288 ---- 0000                                 ld          R0, #0
+               /id0544:
+               ;?
+               ;?             i2cStart();
+0289 ---- 6000                                     ld          R6, #0x0000
+028a 8606 1690                                     jsr         I2cStart
+028c ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             i2cTx((MMC34160PJ_I2C_ADDR << 1) | I2C_OP_WRITE);
+028d ---- 7060                                     ld          R7, #96
+028e ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+028f 8606 16a5                                     jsr         I2cTxByte
+0291 ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             i2cTx(n << 1); //n*2 (offset)
+0292 ---- fd40                                     ld          R7, R0
+0293 ---- fda1                                     lsl         R7, #1
+0294 ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0295 8606 16a5                                     jsr         I2cTxByte
+0297 ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             i2cRepeatedStart();
+0298 ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0299 8606 1687                                     jsr         I2cRepeatedStart
+029b ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             i2cTx((MMC34160PJ_I2C_ADDR << 1) | I2C_OP_READ);
+029c ---- 7061                                     ld          R7, #97
+029d ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+029e 8606 16a5                                     jsr         I2cTxByte
+02a0 ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             i2cRxAck(mag);
+02a1 ---- 7000                                     ld          R7, #0x0000
+02a2 ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02a3 8606 16c9                                     jsr         I2cRxByte
+02a5 ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             output.mmc34160pjaxis[n] = 0x00FF & mag;
+02a6 ---- f0ff                                     and         R7, #255
+02a7 ---- 50c5                                     ld          R5, #(imuv6SensorTask/output/mmc34160pjaxis + 0)
+02a8 ---- ff3d                                     st          R7, [R5+R0]
+               ;?             i2cRxNack(mag);
+02a9 ---- 7001                                     ld          R7, #0x0001
+02aa ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02ab 8606 16c9                                     jsr         I2cRxByte
+02ad ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?             output.mmc34160pjaxis[n] = (mag << 8) | output.mmc34160pjaxis[n];
+02ae ---- fda0                                     lsl         R7, #8
+02af ---- 50c5                                     ld          R5, #(imuv6SensorTask/output/mmc34160pjaxis + 0)
+02b0 ---- df1d                                     ld          R5, [R5+R0]
+02b1 ---- fd0d                                     or          R7, R5
+02b2 ---- 50c5                                     ld          R5, #(imuv6SensorTask/output/mmc34160pjaxis + 0)
+02b3 ---- ff3d                                     st          R7, [R5+R0]
+               ;?             i2cStop();
+02b4 ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02b5 8606 1696                                     jsr         I2cStop
+02b7 ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?         }
+02b8 ---- 8801                                 add         R0, #1
+02b9 ---- 8a03                                 cmp         R0, #3
+02ba ---- aece                                 bltu        /id0544
+               ;?
+               ;?         //Start new measurement
+               ;?         i2cWriteValue(0x01, MMC34160PJ_I2C_ADDR, 0x07);
+               ;?         >   i2cStart();
+02bb ---- 6000                                 ld          R6, #0x0000
+02bc 8606 1690                                 jsr         I2cStart
+02be ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx((addr << 1) | I2C_OP_WRITE);
+02bf ---- 7060                                 ld          R7, #96
+02c0 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02c1 8606 16a5                                 jsr         I2cTxByte
+02c3 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(register);
+02c4 ---- 7007                                 ld          R7, #7
+02c5 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02c6 8606 16a5                                 jsr         I2cTxByte
+02c8 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(value);
+02c9 ---- 7001                                 ld          R7, #1
+02ca ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02cb 8606 16a5                                 jsr         I2cTxByte
+02cd ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cStop();
+02ce ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02cf 8606 1696                                 jsr         I2cStop
+02d1 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     }
+               /id0512:
+               ;? }
+               /id0487:
+               ;?
+               ;?
+               ;?
+               ;?
+               ;? //ADXL355 SPI
+               ;? //=======================================
+               ;?
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+02d2 ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+02d3 ---- 8c04                         tst         R0, #4
+02d4 ---- b620                         bz          /id0561
+               ;?     U16 n = 0;
+02d5 ---- 0000                             ld          R0, #0
+               ;?
+               ;?
+               ;?     spiBegin(AUXIO_SPI_CSN_ADXL355);
+02d6 ---- 65b5                             iobset      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+02d7 ---- 56bc                             iobclr      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?     spiTx8bit((0x08 << 1) | ADXL355_SPI_READ); //XDATA3 starts at 0x08 << 1 für RW-bit
+02d8 ---- 5011                             ld          R5, #17
+02d9 ---- db03                             out         R5, [#IOP_SPIM_TX8]
+               ;?
+               ;?     while (n < ADXL355_AXIS_WORDS) {
+               /id0565:
+02da ---- 8a06                             cmp         R0, #6
+02db ---- a615                             bgeu        /id0566
+               ;?
+               ;?         spiRx8bit(acc);
+02dc ---- 4403                                 iobclr      #0, [#IOP_SPIM_TX8]
+02dd ---- 9905                                 in          R1, [#IOP_SPIM_RX8]
+               ;?         output.adxl355axis[n] = (acc << 8); //upper byte
+02de ---- 9da0                                 lsl         R1, #8
+02df ---- 50b3                                 ld          R5, #(imuv6SensorTask/output/adxl355axis + 0)
+02e0 ---- 9f3d                                 st          R1, [R5+R0]
+               ;?         spiRx8bit(acc);
+02e1 ---- 4403                                 iobclr      #0, [#IOP_SPIM_TX8]
+02e2 ---- 9905                                 in          R1, [#IOP_SPIM_RX8]
+               ;?         output.adxl355axis[n] = (output.adxl355axis[n] | acc); //lower byte
+02e3 ---- 50b3                                 ld          R5, #(imuv6SensorTask/output/adxl355axis + 0)
+02e4 ---- df1d                                 ld          R5, [R5+R0]
+02e5 ---- dd09                                 or          R5, R1
+02e6 ---- 10b3                                 ld          R1, #(imuv6SensorTask/output/adxl355axis + 0)
+02e7 ---- df39                                 st          R5, [R1+R0]
+               ;?
+               ;?         n += 1; //n += 1; //next word in output array, n = n + 1
+02e8 ---- 8801                                 add         R0, #1
+               ;?
+               ;?         spiRx8bit(acc);
+02e9 ---- 4403                                 iobclr      #0, [#IOP_SPIM_TX8]
+02ea ---- 9905                                 in          R1, [#IOP_SPIM_RX8]
+               ;?         output.adxl355axis[n] = (acc << 8); //Only upper nibble
+02eb ---- dd41                                 ld          R5, R1
+02ec ---- dda0                                 lsl         R5, #8
+02ed ---- 60b3                                 ld          R6, #(imuv6SensorTask/output/adxl355axis + 0)
+02ee ---- df3e                                 st          R5, [R6+R0]
+               ;?
+               ;?         n += 1; //next axis
+02ef ---- 8801                                 add         R0, #1
+               ;?     }
+02f0 ---- 06da                             jmp         /id0565
+               /id0566:
+               ;?
+               ;?     spiEnd(AUXIO_SPI_CSN_ADXL355);
+               /id0581:
+02f1 ---- 2408                             iobtst      #0, [#IOP_SPIM_DATAIDLE]
+02f2 ---- a6fe                             biob0       /id0581
+02f3 ---- 45b5                             iobclr      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+02f4 ---- 76bc                             iobset      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;? }
+               /id0561:
+               ;?
+               ;?
+               ;?
+               ;? //6-DOF Sensor BMI160
+               ;? //=======================================
+               ;?
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_GYRO_BV) {
+02f5 ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+02f6 ---- 8c02                         tst         R0, #2
+02f7 ---- b636                         bz          /id0582
+               ;?     for (U16 n = 0; n < BMI160_GYRO_AXIS_COUNT; n++) {
+02f8 ---- 0000                             ld          R0, #0
+               /id0614:
+               ;?
+               ;?         i2cStart();
+02f9 ---- 6000                                 ld          R6, #0x0000
+02fa 8606 1690                                 jsr         I2cStart
+02fc ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_WRITE);
+02fd ---- 70d0                                 ld          R7, #208
+02fe ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+02ff 8606 16a5                                 jsr         I2cTxByte
+0301 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx(0x0C + (n << 1)); //Start 0x0C + n*2 (offset)
+0302 ---- fd40                                 ld          R7, R0
+0303 ---- fda1                                 lsl         R7, #1
+0304 ---- f80c                                 add         R7, #12
+0305 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0306 8606 16a5                                 jsr         I2cTxByte
+0308 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cRepeatedStart();
+0309 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+030a 8606 1687                                 jsr         I2cRepeatedStart
+030c ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_READ);
+030d ---- 70d1                                 ld          R7, #209
+030e ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+030f 8606 16a5                                 jsr         I2cTxByte
+0311 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cRxAck(acc);
+0312 ---- 7000                                 ld          R7, #0x0000
+0313 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0314 8606 16c9                                 jsr         I2cRxByte
+0316 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0317 ---- 9d47                                 ld          R1, R7
+               ;?         output.bmi160gyroaxis[n] = 0x00FF & acc;
+0318 ---- 90ff                                 and         R1, #255
+0319 ---- 50c2                                 ld          R5, #(imuv6SensorTask/output/bmi160gyroaxis + 0)
+031a ---- 9f3d                                 st          R1, [R5+R0]
+               ;?         i2cRxNack(acc);
+031b ---- 7001                                 ld          R7, #0x0001
+031c ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+031d 8606 16c9                                 jsr         I2cRxByte
+031f ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0320 ---- 9d47                                 ld          R1, R7
+               ;?         output.bmi160gyroaxis[n] = (acc << 8) | output.bmi160gyroaxis[n];
+0321 ---- 9da0                                 lsl         R1, #8
+0322 ---- 50c2                                 ld          R5, #(imuv6SensorTask/output/bmi160gyroaxis + 0)
+0323 ---- df1d                                 ld          R5, [R5+R0]
+0324 ---- 9d0d                                 or          R1, R5
+0325 ---- 50c2                                 ld          R5, #(imuv6SensorTask/output/bmi160gyroaxis + 0)
+0326 ---- 9f3d                                 st          R1, [R5+R0]
+               ;?         i2cStop();
+0327 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0328 8606 1696                                 jsr         I2cStop
+032a ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     }
+032b ---- 8801                             add         R0, #1
+032c ---- 8a03                             cmp         R0, #3
+032d ---- aecb                             bltu        /id0614
+               ;? }
+               /id0582:
+               ;?
+               ;?
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+032e ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+032f ---- 8c01                         tst         R0, #1
+0330 ---- b636                         bz          /id0615
+               ;?     for (U16 n = 0; n < BMI160_ACCEL_AXIS_COUNT; n++) {
+0331 ---- 0000                             ld          R0, #0
+               /id0647:
+               ;?         i2cStart();
+0332 ---- 6000                                 ld          R6, #0x0000
+0333 8606 1690                                 jsr         I2cStart
+0335 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_WRITE);
+0336 ---- 70d0                                 ld          R7, #208
+0337 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0338 8606 16a5                                 jsr         I2cTxByte
+033a ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx(0x12 + (n << 1)); //Start 0x22 + n*2 (offset)
+033b ---- fd40                                 ld          R7, R0
+033c ---- fda1                                 lsl         R7, #1
+033d ---- f812                                 add         R7, #18
+033e ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+033f 8606 16a5                                 jsr         I2cTxByte
+0341 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cRepeatedStart();
+0342 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0343 8606 1687                                 jsr         I2cRepeatedStart
+0345 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_READ);
+0346 ---- 70d1                                 ld          R7, #209
+0347 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0348 8606 16a5                                 jsr         I2cTxByte
+034a ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cRxAck(acc);
+034b ---- 7000                                 ld          R7, #0x0000
+034c ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+034d 8606 16c9                                 jsr         I2cRxByte
+034f ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0350 ---- 9d47                                 ld          R1, R7
+               ;?         output.bmi160accelaxis[n] = 0x00FF & acc;
+0351 ---- 90ff                                 and         R1, #255
+0352 ---- 50bf                                 ld          R5, #(imuv6SensorTask/output/bmi160accelaxis + 0)
+0353 ---- 9f3d                                 st          R1, [R5+R0]
+               ;?         i2cRxNack(acc);
+0354 ---- 7001                                 ld          R7, #0x0001
+0355 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0356 8606 16c9                                 jsr         I2cRxByte
+0358 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0359 ---- 9d47                                 ld          R1, R7
+               ;?         output.bmi160accelaxis[n] = (acc << 8) | output.bmi160accelaxis[n];
+035a ---- 9da0                                 lsl         R1, #8
+035b ---- 50bf                                 ld          R5, #(imuv6SensorTask/output/bmi160accelaxis + 0)
+035c ---- df1d                                 ld          R5, [R5+R0]
+035d ---- 9d0d                                 or          R1, R5
+035e ---- 50bf                                 ld          R5, #(imuv6SensorTask/output/bmi160accelaxis + 0)
+035f ---- 9f3d                                 st          R1, [R5+R0]
+               ;?         i2cStop();
+0360 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0361 8606 1696                                 jsr         I2cStop
+0363 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     }
+0364 ---- 8801                             add         R0, #1
+0365 ---- 8a03                             cmp         R0, #3
+0366 ---- aecb                             bltu        /id0647
+               ;? }
+               /id0615:
+               ;?
+               ;?
+               ;? //Barometer and Temperature
+               ;? //=======================================
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_BAROMETER_BV) {
+0367 ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+0368 ---- 8c10                         tst         R0, #16
+0369 ---- b664                         bz          /id0648
+               ;?     if (state.i2cStatus == 0x0000) {
+036a ---- 08cb                             ld          R0, [#imuv6SensorTask/state/i2cStatus]
+036b ---- 8a00                             cmp         R0, #0
+036c ---- be61                             bneq        /id0650
+               ;?
+               ;?         //i2cDeviceWriteReg16MsbFirst((BAROM_I2C_ADDR << 1), BAROM_REG_PWR_CTRL, (BAROM_CTRL_MODE_FORCED | BAROM_CTRL_PRES_TEMP_EN));
+               ;?         // Select the result register
+               ;?         U16 temp;
+               ;?         U16 pres = 0;
+               ;?         U16 status = 0;
+               ;?         output.temp = 0;
+036d ---- 0000                                 ld          R0, #0
+036e ---- 0cc9                                 st          R0, [#imuv6SensorTask/output/temp]
+               ;?
+               ;?         //i2cDeviceReadReg8((BAROM_I2C_ADDR << 1), BAROM_REG_STATUS; status);
+               ;?         i2cDeviceReadReg8((BAROM_I2C_ADDR << 1), 0x0003; status);
+036f ---- 5003                                 ld          R5, #3
+0370 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0371 8603 7378                                 ld          R7, #/id0655
+0373 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+0375 ---- 70ec                                 ld          R7, #(236 | 0)
+0376 8607 070c                                 jmp         I2cDeviceReadReg8
+               /id0655:
+0378 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+037a ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+037b ---- 8d47                                 ld          R0, R7
+               ;?         state.status = status;
+037c ---- 0ccc                                 st          R0, [#imuv6SensorTask/state/status]
+               ;?
+               ;?
+               ;?
+               ;?
+               ;?         //i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), BAROM_REG_PWR_CTRL, (BAROM_CTRL_MODE_FORCED | BAROM_CTRL_PRES_TEMP_EN));
+               ;?         i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), 0x001B, (0x0010 | 0x0003));
+037d ---- 501b                                 ld          R5, #27
+037e ---- 4013                                 ld          R4, #19
+037f ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0380 8603 7387                                 ld          R7, #/id0662
+0382 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+0384 ---- 70ec                                 ld          R7, #(236 | 0)
+0385 8607 072b                                 jmp         I2cDeviceWriteReg8
+               /id0662:
+0387 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+0389 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?         i2cStart();
+038a ---- 6000                                 ld          R6, #0x0000
+038b 8606 1690                                 jsr         I2cStart
+038d ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx((BAROM_I2C_ADDR << 1) | I2C_OP_WRITE);
+038e ---- 70ec                                 ld          R7, #236
+038f ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0390 8606 16a5                                 jsr         I2cTxByte
+0392 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx(0x08);
+0393 ---- 7008                                 ld          R7, #8
+0394 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0395 8606 16a5                                 jsr         I2cTxByte
+0397 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cRepeatedStart();
+0398 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0399 8606 1687                                 jsr         I2cRepeatedStart
+039b ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cTx((BAROM_I2C_ADDR << 1) | I2C_OP_READ);
+039c ---- 70ed                                 ld          R7, #237
+039d ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+039e 8606 16a5                                 jsr         I2cTxByte
+03a0 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         i2cRxAck(temp);
+03a1 ---- 7000                                 ld          R7, #0x0000
+03a2 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03a3 8606 16c9                                 jsr         I2cRxByte
+03a5 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+03a6 ---- cd47                                 ld          R4, R7
+               ;?         output.temp = 0x00FF & temp;
+03a7 ---- c0ff                                 and         R4, #255
+03a8 ---- 4cc9                                 st          R4, [#imuv6SensorTask/output/temp]
+               ;?         i2cRxNack(temp);
+03a9 ---- 7001                                 ld          R7, #0x0001
+03aa ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03ab 8606 16c9                                 jsr         I2cRxByte
+03ad ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+03ae ---- cd47                                 ld          R4, R7
+               ;?         output.temp = (temp << 8) | output.temp;
+03af ---- dd44                                 ld          R5, R4
+03b0 ---- dda0                                 lsl         R5, #8
+03b1 ---- 68c9                                 ld          R6, [#imuv6SensorTask/output/temp]
+03b2 ---- dd0e                                 or          R5, R6
+03b3 ---- 5cc9                                 st          R5, [#imuv6SensorTask/output/temp]
+               ;?         i2cStop();
+03b4 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03b5 8606 1696                                 jsr         I2cStop
+03b7 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?         //i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), BAROM_REG_TEMP_DATA_LSB; temp);
+               ;?         //i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), 0x0008; temp);
+               ;?         //i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), BAROM_REG_PRES_DATA_LSB; pres);
+               ;?         i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), 0x0005; pres);
+03b8 ---- 5005                                 ld          R5, #5
+03b9 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03ba 8603 73c1                                 ld          R7, #/id0695
+03bc 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+03be ---- 70ec                                 ld          R7, #(236 | 0)
+03bf 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0695:
+03c1 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+03c3 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?
+               ;?
+               ;?         // If successful ...
+               ;?         if (state.i2cStatus == 0x0000) {
+03c4 ---- 58cb                                 ld          R5, [#imuv6SensorTask/state/i2cStatus]
+03c5 ---- da00                                 cmp         R5, #0
+03c6 ---- be07                                 bneq        /id0701
+               ;?
+               ;?             output.temp = temp; //offset for better graph
+03c7 ---- 4cc9                                     st          R4, [#imuv6SensorTask/output/temp]
+               ;?             output.pressure = pres;
+03c8 ---- 7cc8                                     st          R7, [#imuv6SensorTask/output/pressure]
+               ;?             state.status = status;
+03c9 ---- 0ccc                                     st          R0, [#imuv6SensorTask/state/status]
+               ;?             i2cStop();
+03ca ---- 68cb                                     ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03cb 8606 1696                                     jsr         I2cStop
+03cd ---- 6ccb                                     st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         }
+               /id0701:
+               ;?     }
+               /id0650:
+               ;? }
+               /id0648:
+               ;?
+               ;? //Fuel Gauge MAX17055
+               ;? //=======================================
+               ;?
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_BATTERY_BV) {
+03ce ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+03cf ---- 8c40                         tst         R0, #64
+03d0 ---- b671                         bz          /id0708
+               ;?     state.batterySamplingWaitCount = state.batterySamplingWaitCount + 1;
+03d1 ---- 08ca                             ld          R0, [#imuv6SensorTask/state/batterySamplingWaitCount]
+03d2 ---- 8801                             add         R0, #1
+03d3 ---- 0cca                             st          R0, [#imuv6SensorTask/state/batterySamplingWaitCount]
+               ;?     if (state.batterySamplingWaitCount >= cfg.batterySamplingInterval) {
+03d4 ---- 08ca                             ld          R0, [#imuv6SensorTask/state/batterySamplingWaitCount]
+03d5 ---- 18ae                             ld          R1, [#imuv6SensorTask/cfg/batterySamplingInterval]
+03d6 ---- 8d29                             cmp         R0, R1
+03d7 ---- ae6a                             bltu        /id0711
+               ;?         state.batterySamplingWaitCount = 0;
+03d8 ---- 0000                                 ld          R0, #0
+03d9 ---- 0cca                                 st          R0, [#imuv6SensorTask/state/batterySamplingWaitCount]
+               ;?         i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x05; output.batteryCapacity); //Read RepCap
+03da ---- 5005                                 ld          R5, #5
+03db ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03dc 8603 73e3                                 ld          R7, #/id0715
+03de 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+03e0 ---- 706c                                 ld          R7, #(108 | 0)
+03e1 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0715:
+03e3 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+03e5 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+03e6 ---- 7cb9                                 st          R7, [#imuv6SensorTask/output/batteryCapacity]
+               ;?         i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x10; output.batteryCapacityFull); //Read FullCapRep
+03e7 ---- 5010                                 ld          R5, #16
+03e8 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03e9 8603 73f0                                 ld          R7, #/id0721
+03eb 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+03ed ---- 706c                                 ld          R7, #(108 | 0)
+03ee 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0721:
+03f0 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+03f2 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+03f3 ---- 7cba                                 st          R7, [#imuv6SensorTask/output/batteryCapacityFull]
+               ;?         i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x19; output.batteryVoltage); //Read AvgVCell
+03f4 ---- 5019                                 ld          R5, #25
+03f5 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+03f6 8603 73fd                                 ld          R7, #/id0727
+03f8 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+03fa ---- 706c                                 ld          R7, #(108 | 0)
+03fb 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0727:
+03fd 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+03ff ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0400 ---- 7cbe                                 st          R7, [#imuv6SensorTask/output/batteryVoltage]
+               ;?         i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x0A; output.batteryCurrent); //Read Current
+0401 ---- 500a                                 ld          R5, #10
+0402 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0403 8604 700a                                 ld          R7, #/id0733
+0405 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+0407 ---- 706c                                 ld          R7, #(108 | 0)
+0408 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0733:
+040a 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+040c ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+040d ---- 7cbb                                 st          R7, [#imuv6SensorTask/output/batteryCurrent]
+               ;?         i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x0B; output.batteryCurrentAverage); //Read AvgCurrent
+040e ---- 500b                                 ld          R5, #11
+040f ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0410 8604 7017                                 ld          R7, #/id0739
+0412 8606 7e61                                 st          R7, [#i2cDeviceCommonReturn]
+0414 ---- 706c                                 ld          R7, #(108 | 0)
+0415 8606 0662                                 jmp         I2cDeviceReadReg16LsbFirst
+               /id0739:
+0417 8606 0a5e                                 ld          R0, [#i2cDeviceCommonBackupR0]
+0419 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+041a ---- 7cbc                                 st          R7, [#imuv6SensorTask/output/batteryCurrentAverage]
+               ;?         i2cReadHighValue(output.batteryStateOfCharge, MAX17055_I2C_ADDR, 0x06); //Read RepCap
+               ;?         >   i2cStart();
+041b ---- 6000                                 ld          R6, #0x0000
+041c 8606 1690                                 jsr         I2cStart
+041e ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx((addr << 1) | I2C_OP_WRITE);
+041f ---- 706c                                 ld          R7, #108
+0420 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0421 8606 16a5                                 jsr         I2cTxByte
+0423 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(register);
+0424 ---- 7006                                 ld          R7, #6
+0425 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0426 8606 16a5                                 jsr         I2cTxByte
+0428 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cRepeatedStart();
+0429 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+042a 8606 1687                                 jsr         I2cRepeatedStart
+042c ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx((addr << 1) | I2C_OP_READ);
+042d ---- 706d                                 ld          R7, #109
+042e ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+042f 8606 16a5                                 jsr         I2cTxByte
+0431 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cRxAck(result); //Dummy read to skip to high byte
+0432 ---- 7000                                 ld          R7, #0x0000
+0433 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0434 8606 16c9                                 jsr         I2cRxByte
+0436 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+0437 ---- 7cbd                                 st          R7, [#imuv6SensorTask/output/batteryStateOfCharge]
+               ;?         >   i2cRxNack(result);
+0438 ---- 7001                                 ld          R7, #0x0001
+0439 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+043a 8606 16c9                                 jsr         I2cRxByte
+043c ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+043d ---- 7cbd                                 st          R7, [#imuv6SensorTask/output/batteryStateOfCharge]
+               ;?         >   i2cStop();
+043e ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+043f 8606 1696                                 jsr         I2cStop
+0441 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     }
+               /id0711:
+               ;? }
+               /id0708:
+               ;?
+               ;?
+               ;? //exposed pad analog reading
+               ;? //=======================================
+               ;?
+               ;? if (cfg.sensorConfigOld & CONFIG_ENABLE_ANALOG_BV) {
+0442 ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+0443 ---- 8c20                         tst         R0, #32
+0444 ---- b604                         bz          /id0769
+               ;?     // Sample the sensor
+               ;?     adcGenManualTrigger();
+0445 ---- 6491                             iobset      #0, [#IOP_ANAIF_ADCTRIG]
+               ;?     adcReadFifo(output.adcValue);
+0446 ---- edb1                             wev1        #WEVSEL_ADC_FIFO_NOT_EMPTY
+0447 ---- 8990                             in          R0, [#IOP_ANAIF_ADCFIFO]
+0448 ---- 0cb2                             st          R0, [#imuv6SensorTask/output/adcValue]
+               ;? }
+               /id0769:
+               ;?
+               ;? // Determine if the ADC value is below the low threshold or above the high threshold
+               ;? //U16 bvWindowState = 0x0000;
+               ;? //if (adcValue < cfg.adcWindowLow) {
+               ;? //   bvWindowState |= BV_ADC_WINDOW_LOW;
+               ;? //}
+               ;? //if (adcValue > cfg.adcWindowHigh) {
+               ;? //    bvWindowState |= BV_ADC_WINDOW_HIGH;
+               ;? //}
+               ;?
+               ;?
+               ;?
+               ;? //Reset Sensors
+               ;? //=======================================
+               ;? if (cfg.resetSensors != 0){
+0449 ---- 08af                         ld          R0, [#imuv6SensorTask/cfg/resetSensors]
+044a ---- 8a00                         cmp         R0, #0
+044b ---- b663                         beq         /id0772
+               ;?     cfg.resetSensors = 0;
+044c ---- 0000                             ld          R0, #0
+044d ---- 0caf                             st          R0, [#imuv6SensorTask/cfg/resetSensors]
+               ;?
+               ;?     //reset BMI160
+               ;?     if (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_GYRO_BV) {
+044e ---- 08b1                             ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+044f ---- 8c02                             tst         R0, #2
+0450 ---- b637                             bz          /id0775
+               ;?
+               ;?         //Compensate offset
+               ;?         i2cWriteValue(0x03, BMI160_I2C_ADDR, 0x7E);
+               ;?         >   i2cStart();
+0451 ---- 6000                                 ld          R6, #0x0000
+0452 8606 1690                                 jsr         I2cStart
+0454 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0455 ---- 70d0                                 ld          R7, #208
+0456 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0457 8606 16a5                                 jsr         I2cTxByte
+0459 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(register);
+045a ---- 707e                                 ld          R7, #126
+045b ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+045c 8606 16a5                                 jsr         I2cTxByte
+045e ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(value);
+045f ---- 7003                                 ld          R7, #3
+0460 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0461 8606 16a5                                 jsr         I2cTxByte
+0463 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cStop();
+0464 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0465 8606 1696                                 jsr         I2cStop
+0467 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         //Wait for offset compensation
+               ;?         for (U16 n = 0; n < 5; n++) {
+0468 ---- 0000                                 ld          R0, #0
+               /id0794:
+               ;?             fwDelayUs(50000);
+0469 86c3 1350                                     ld          R1, #-15536
+046b ---- 9801                                     add         R1, #1
+046c ---- 9b49                                     out         R1, [#IOP_EVCTL_PROGDLY]
+046d ---- 8db1                                     wev1        #WEVSEL_PROG_DLY
+               ;?         }
+046e ---- 8801                                 add         R0, #1
+046f ---- 8a05                                 cmp         R0, #5
+0470 ---- aef8                                 bltu        /id0794
+               ;?         //Enable offset for gyroscope
+               ;?         i2cWriteValue(0x80, BMI160_I2C_ADDR, 0x77);
+               ;?         >   i2cStart();
+0471 ---- 6000                                 ld          R6, #0x0000
+0472 8606 1690                                 jsr         I2cStart
+0474 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0475 ---- 70d0                                 ld          R7, #208
+0476 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0477 8606 16a5                                 jsr         I2cTxByte
+0479 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(register);
+047a ---- 7077                                 ld          R7, #119
+047b ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+047c 8606 16a5                                 jsr         I2cTxByte
+047e ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cTx(value);
+047f ---- 7080                                 ld          R7, #128
+0480 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0481 8606 16a5                                 jsr         I2cTxByte
+0483 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?         >   i2cStop();
+0484 ---- 68cb                                 ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0485 8606 1696                                 jsr         I2cStop
+0487 ---- 6ccb                                 st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     }
+               /id0775:
+               ;?
+               ;?     //reset ADXL
+               ;?     if (cfg.sensorConfigOld & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+0488 ---- 08b1                             ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+0489 ---- 8c04                             tst         R0, #4
+048a ---- b624                             bz          /id0811
+               ;?
+               ;?         spiBegin(AUXIO_SPI_CSN_ADXL355);
+048b ---- 65b5                                 iobset      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+048c ---- 56bc                                 iobclr      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?         // Perform soft reset, then wait 100 ms
+               ;?         //spiWriteReg(ADXL355_REG_SOFT_RESET, ADXL355_SR_KEY)
+               ;?         spiWriteReg(0x2F, 0x52);
+               ;?         >   spiBegin(AUXIO_SPI_CSN_ADXL355);
+048d ---- 65b5                                 iobset      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+048e ---- 56bc                                 iobclr      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?         >   //spiTx8bit(ACCEL_SPI_WRITE);
+               ;?         >   spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+048f ---- 005e                                 ld          R0, #94
+0490 ---- 8b03                                 out         R0, [#IOP_SPIM_TX8]
+               ;?         >   spiTx8bit(value);
+0491 ---- 0052                                 ld          R0, #82
+0492 ---- 8b03                                 out         R0, [#IOP_SPIM_TX8]
+               ;?         >   spiEnd(AUXIO_SPI_CSN_ADXL355);
+               /id0815:
+0493 ---- 2408                                 iobtst      #0, [#IOP_SPIM_DATAIDLE]
+0494 ---- a6fe                                 biob0       /id0815
+0495 ---- 45b5                                 iobclr      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+0496 ---- 76bc                                 iobset      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?         fwDelayUs(50000);
+0497 86c3 0350                                 ld          R0, #-15536
+0499 ---- 8801                                 add         R0, #1
+049a ---- 8b49                                 out         R0, [#IOP_EVCTL_PROGDLY]
+049b ---- 8db1                                 wev1        #WEVSEL_PROG_DLY
+               ;?         fwDelayUs(50000);
+049c 86c3 0350                                 ld          R0, #-15536
+049e ---- 8801                                 add         R0, #1
+049f ---- 8b49                                 out         R0, [#IOP_EVCTL_PROGDLY]
+04a0 ---- 8db1                                 wev1        #WEVSEL_PROG_DLY
+               ;?
+               ;?         // Perform one-time configuration of the ADXL355 accelerometer
+               ;?         //reset low noise and measure on, begin measuring mode
+               ;?         //spiWriteReg(ADXL355_REG_POWER_CTL, ACCEL_PC_MEASURE_ON);
+               ;?         spiWriteReg(0x2D, 0x00);
+               ;?         >   spiBegin(AUXIO_SPI_CSN_ADXL355);
+04a1 ---- 65b5                                 iobset      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04a2 ---- 56bc                                 iobclr      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?         >   //spiTx8bit(ACCEL_SPI_WRITE);
+               ;?         >   spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+04a3 ---- 005a                                 ld          R0, #90
+04a4 ---- 8b03                                 out         R0, [#IOP_SPIM_TX8]
+               ;?         >   spiTx8bit(value);
+04a5 ---- 0000                                 ld          R0, #0
+04a6 ---- 8b03                                 out         R0, [#IOP_SPIM_TX8]
+               ;?         >   spiEnd(AUXIO_SPI_CSN_ADXL355);
+               /id0820:
+04a7 ---- 2408                                 iobtst      #0, [#IOP_SPIM_DATAIDLE]
+04a8 ---- a6fe                                 biob0       /id0820
+04a9 ---- 45b5                                 iobclr      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04aa ---- 76bc                                 iobset      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?         spiEnd(AUXIO_SPI_CSN_ADXL355);
+               /id0821:
+04ab ---- 2408                                 iobtst      #0, [#IOP_SPIM_DATAIDLE]
+04ac ---- a6fe                                 biob0       /id0821
+04ad ---- 45b5                                 iobclr      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04ae ---- 76bc                                 iobset      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?         //Set Accel Range to +-4g more like 2 g ?
+               ;?         //spiWriteReg(0x2C, 0x02);
+               ;?     }
+               /id0811:
+               ;?
+               ;?     //reset Magnetometer
+               ;?
+               ;?     //reset Barometer
+               ;? }
+               /id0772:
+               ;?
+               ;?
+               ;? // Alert main CPU that data is available
+               ;? fwGenAlertInterrupt();
+04af ---- 08a4                         ld          R0, [#fwCtrlInt/bvTaskIoAlert]
+04b0 ---- 8201                         or          R0, #(1 << 0)
+04b1 ---- 0ca4                         st          R0, [#fwCtrlInt/bvTaskIoAlert]
+               ;?
+               ;?
+               ;? /////////////////////////////////////////////////////////////////
+               ;? // Enable and disable sensor ICs based on sensorConfig
+               ;? /////////////////////////////////////////////////////////////////
+               ;?
+               ;? sensorConfigStartBits = cfg.sensorConfig & (~cfg.sensorConfigOld);
+04b2 ---- 18b0                         ld          R1, [#imuv6SensorTask/cfg/sensorConfig]
+04b3 ---- 08b1                         ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+04b4 ---- 8d92                         inv         R0
+04b5 ---- 9d00                         and         R1, R0
+               ;? sensorConfigStopBits = cfg.sensorConfigOld & (~cfg.sensorConfig);
+04b6 ---- 28b1                         ld          R2, [#imuv6SensorTask/cfg/sensorConfigOld]
+04b7 ---- 08b0                         ld          R0, [#imuv6SensorTask/cfg/sensorConfig]
+04b8 ---- 8d92                         inv         R0
+04b9 ---- ad00                         and         R2, R0
+               ;?
+               ;? //ADXL355 SPI init
+               ;? //=======================================
+               ;?
+               ;?
+               ;? // Start or stop Accel
+               ;? if (sensorConfigStartBits & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+04ba ---- 9c04                         tst         R1, #4
+04bb ---- b620                         bz          /id0827
+               ;?     // Perform soft reset, then wait 100 ms
+               ;?     //spiWriteReg(ADXL355_REG_SOFT_RESET, ADXL355_SR_KEY)
+               ;?     spiWriteReg(0x2F, 0x52);
+               ;?     >   spiBegin(AUXIO_SPI_CSN_ADXL355);
+04bc ---- 65b5                             iobset      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04bd ---- 56bc                             iobclr      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?     >   //spiTx8bit(ACCEL_SPI_WRITE);
+               ;?     >   spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+04be ---- 005e                             ld          R0, #94
+04bf ---- 8b03                             out         R0, [#IOP_SPIM_TX8]
+               ;?     >   spiTx8bit(value);
+04c0 ---- 0052                             ld          R0, #82
+04c1 ---- 8b03                             out         R0, [#IOP_SPIM_TX8]
+               ;?     >   spiEnd(AUXIO_SPI_CSN_ADXL355);
+               /id0832:
+04c2 ---- 2408                             iobtst      #0, [#IOP_SPIM_DATAIDLE]
+04c3 ---- a6fe                             biob0       /id0832
+04c4 ---- 45b5                             iobclr      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04c5 ---- 76bc                             iobset      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?     fwDelayUs(50000);
+04c6 86c3 0350                             ld          R0, #-15536
+04c8 ---- 8801                             add         R0, #1
+04c9 ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+04ca ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+               ;?     fwDelayUs(50000);
+04cb 86c3 0350                             ld          R0, #-15536
+04cd ---- 8801                             add         R0, #1
+04ce ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+04cf ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+               ;?
+               ;?     // Perform one-time configuration of the ADXL355 accelerometer
+               ;?     //reset low noise and measure on, begin measuring mode
+               ;?     //spiWriteReg(ADXL355_REG_POWER_CTL, ACCEL_PC_MEASURE_ON);
+               ;?     spiWriteReg(0x2D, 0x00);
+               ;?     >   spiBegin(AUXIO_SPI_CSN_ADXL355);
+04d0 ---- 65b5                             iobset      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04d1 ---- 56bc                             iobclr      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?     >   //spiTx8bit(ACCEL_SPI_WRITE);
+               ;?     >   spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+04d2 ---- 005a                             ld          R0, #90
+04d3 ---- 8b03                             out         R0, [#IOP_SPIM_TX8]
+               ;?     >   spiTx8bit(value);
+04d4 ---- 0000                             ld          R0, #0
+04d5 ---- 8b03                             out         R0, [#IOP_SPIM_TX8]
+               ;?     >   spiEnd(AUXIO_SPI_CSN_ADXL355);
+               /id0837:
+04d6 ---- 2408                             iobtst      #0, [#IOP_SPIM_DATAIDLE]
+04d7 ---- a6fe                             biob0       /id0837
+04d8 ---- 45b5                             iobclr      #(25 & 0x07), [#(IOP_AIODIO0_GPIODIE + (25 >> 3))]
+04d9 ---- 76bc                             iobset      #(22 & 0x07), [#(IOP_AIODIO0_GPIODOUT + (22 >> 3))]
+               ;?
+               ;?     //Set Accel Range to +-4g more like 2 g ?
+               ;?     //spiWriteReg(0x2C, 0x02);
+               ;? } else if (sensorConfigStopBits & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+04da 8604 04de                         jmp         /id0829
+               /id0827:
+04dc ---- ac04                         tst         R2, #4
+04dd ---- b600                         bz          /id0838
+               ;?      // TODO
+               ;? }
+               /id0838:
+               /id0829:
+               ;?
+               ;? //Magnetometer MMC34160PJ init
+               ;? //=======================================
+               ;?
+               ;? if (sensorConfigStartBits & CONFIG_ENABLE_MAGNETOMETER_BV) {
+04de ---- 9c08                         tst         R1, #8
+04df ---- be02                         bnz         /br0001 ; Repaired out-of-range bz
+04e0 8605 0578                         jmp         /id0840
+               /br0001:
+               ;?     //Magnetometer enable 2.16ms measure interval -> only 14bit resolution
+               ;?     i2cWriteValue(0x02, MMC34160PJ_I2C_ADDR, 0x08);
+               ;?     >   i2cStart();
+04e2 ---- 6000                             ld          R6, #0x0000
+04e3 8606 1690                             jsr         I2cStart
+04e5 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+04e6 ---- 7060                             ld          R7, #96
+04e7 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+04e8 8606 16a5                             jsr         I2cTxByte
+04ea ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+04eb ---- 7008                             ld          R7, #8
+04ec ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+04ed 8606 16a5                             jsr         I2cTxByte
+04ef ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+04f0 ---- 7002                             ld          R7, #2
+04f1 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+04f2 8606 16a5                             jsr         I2cTxByte
+04f4 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+04f5 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+04f6 8606 1696                             jsr         I2cStop
+04f8 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Magnetometer enable 4.08ms measure interval
+               ;?     //i2cWriteValue(0x01, MMC34160PJ_I2C_ADDR, 0x08);
+               ;?
+               ;?     //REFILL CAP
+               ;?     i2cWriteValue(0x80, MMC34160PJ_I2C_ADDR, 0x07);
+               ;?     >   i2cStart();
+04f9 ---- 6000                             ld          R6, #0x0000
+04fa 8606 1690                             jsr         I2cStart
+04fc ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+04fd ---- 7060                             ld          R7, #96
+04fe ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+04ff 8606 16a5                             jsr         I2cTxByte
+0501 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0502 ---- 7007                             ld          R7, #7
+0503 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0504 8606 16a5                             jsr         I2cTxByte
+0506 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0507 ---- 7080                             ld          R7, #128
+0508 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0509 8606 16a5                             jsr         I2cTxByte
+050b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+050c ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+050d 8606 1696                             jsr         I2cStop
+050f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     fwDelayUs(50000);
+0510 86c3 0350                             ld          R0, #-15536
+0512 ---- 8801                             add         R0, #1
+0513 ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+0514 ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+               ;?     //SET
+               ;?     i2cWriteValue(0x20, MMC34160PJ_I2C_ADDR, 0x07);
+               ;?     >   i2cStart();
+0515 ---- 6000                             ld          R6, #0x0000
+0516 8606 1690                             jsr         I2cStart
+0518 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0519 ---- 7060                             ld          R7, #96
+051a ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+051b 8606 16a5                             jsr         I2cTxByte
+051d ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+051e ---- 7007                             ld          R7, #7
+051f ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0520 8606 16a5                             jsr         I2cTxByte
+0522 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0523 ---- 7020                             ld          R7, #32
+0524 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0525 8606 16a5                             jsr         I2cTxByte
+0527 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0528 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0529 8606 1696                             jsr         I2cStop
+052b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     //REFILL CAP
+               ;?     i2cWriteValue(0x80, MMC34160PJ_I2C_ADDR, 0x07);
+               ;?     >   i2cStart();
+052c ---- 6000                             ld          R6, #0x0000
+052d 8606 1690                             jsr         I2cStart
+052f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0530 ---- 7060                             ld          R7, #96
+0531 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0532 8606 16a5                             jsr         I2cTxByte
+0534 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0535 ---- 7007                             ld          R7, #7
+0536 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0537 8606 16a5                             jsr         I2cTxByte
+0539 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+053a ---- 7080                             ld          R7, #128
+053b ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+053c 8606 16a5                             jsr         I2cTxByte
+053e ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+053f ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0540 8606 1696                             jsr         I2cStop
+0542 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     fwDelayUs(50000);
+0543 86c3 0350                             ld          R0, #-15536
+0545 ---- 8801                             add         R0, #1
+0546 ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+0547 ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+               ;?     //RESET
+               ;?     i2cWriteValue(0x0, MMC34160PJ_I2C_ADDR, 0x07);
+               ;?     >   i2cStart();
+0548 ---- 6000                             ld          R6, #0x0000
+0549 8606 1690                             jsr         I2cStart
+054b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+054c ---- 7060                             ld          R7, #96
+054d ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+054e 8606 16a5                             jsr         I2cTxByte
+0550 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0551 ---- 7007                             ld          R7, #7
+0552 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0553 8606 16a5                             jsr         I2cTxByte
+0555 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0556 ---- 7000                             ld          R7, #0
+0557 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0558 8606 16a5                             jsr         I2cTxByte
+055a ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+055b ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+055c 8606 1696                             jsr         I2cStop
+055e ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Start new measurement
+               ;?     i2cWriteValue(0x01, MMC34160PJ_I2C_ADDR, 0x07);
+               ;?     >   i2cStart();
+055f ---- 6000                             ld          R6, #0x0000
+0560 8606 1690                             jsr         I2cStart
+0562 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+0563 ---- 7060                             ld          R7, #96
+0564 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0565 8606 16a5                             jsr         I2cTxByte
+0567 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0568 ---- 7007                             ld          R7, #7
+0569 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+056a 8606 16a5                             jsr         I2cTxByte
+056c ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+056d ---- 7001                             ld          R7, #1
+056e ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+056f 8606 16a5                             jsr         I2cTxByte
+0571 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0572 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0573 8606 1696                             jsr         I2cStop
+0575 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;? } else if (sensorConfigStopBits & CONFIG_ENABLE_MAGNETOMETER_BV) {
+0576 8605 057a                         jmp         /id0842
+               /id0840:
+0578 ---- ac08                         tst         R2, #8
+0579 ---- b600                         bz          /id0941
+               ;?     // TODO
+               ;? }
+               /id0941:
+               /id0842:
+               ;?
+               ;?
+               ;? //exposed pad analog reading
+               ;? //=======================================
+               ;? // Enable the ADC
+               ;? if (sensorConfigStartBits & CONFIG_ENABLE_ANALOG_BV) {
+057a ---- 9c20                         tst         R1, #32
+057b ---- b616                         bz          /id0943
+               ;?     adcEnableSync(ADC_REF_FIXED, ADC_SAMPLE_TIME_2P7_US, ADC_TRIGGER_MANUAL);
+057c ---- 0020                             ld          R0, #32
+057d ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+057e ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+057f ---- 0041                             ld          R0, #((0 | (((3 < 6) & (!0)) * ADI16_ADCREF_REF_ON_IDLE)) | ADI16_ADCREF_EN)
+0580 ---- 8b9f                             out         R0, [#IOP_ADISET_ADCREF]
+0581 863f 0301                             ld          R0, #((63 << 8) | 0x0001)
+0583 ---- 6467                             iobset      #IOB_SYSIF_ADCCLKCTL_REQ, [#IOP_SYSIF_ADCCLKCTL]
+               /id0946:
+0584 ---- 2567                             iobtst      #IOB_SYSIF_ADCCLKCTL_ACK, [#IOP_SYSIF_ADCCLKCTL]
+0585 ---- a6fe                             biob0       /id0946
+0586 ---- 8b8e                             out         R0, [#IOP_ANAIF_ADCCTL]
+0587 ---- 0078                             ld          R0, #BV_ADI16_ADC_SMPL_CYCLE_EXP
+0588 ---- 8ba6                             out         R0, [#IOP_ADICLR_ADC]
+0589 ---- 0018                             ld          R0, #(3 << BI_ADI16_ADC_SMPL_CYCLE_EXP)
+058a ---- 8b9e                             out         R0, [#IOP_ADISET_ADC]
+058b ---- 0003                             ld          R0, #(ADI16_ADC_EN | ADI16_ADC_RESET_N)
+058c ---- 8b9e                             out         R0, [#IOP_ADISET_ADC]
+058d ---- 8b9e                             out         R0, [#IOP_ADISET_ADC]
+058e ---- 8b9e                             out         R0, [#IOP_ADISET_ADC]
+058f ---- 8b9e                             out         R0, [#IOP_ADISET_ADC]
+               ;? } else if (sensorConfigStopBits & CONFIG_ENABLE_ANALOG_BV) {
+0590 8605 0596                         jmp         /id0945
+               /id0943:
+0592 ---- ac20                         tst         R2, #32
+0593 ---- b602                         bz          /id0948
+               ;?     adcDisable();
+0594 8607 173f                             jsr         AdcDisable
+               ;? }
+               /id0948:
+               /id0945:
+               ;?
+               ;?
+               ;? //6-DOF Sensor BMI160
+               ;? //=======================================
+               ;?
+               ;? // Start Accel
+               ;? if (sensorConfigStartBits & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+0596 ---- 9c01                         tst         R1, #1
+0597 ---- b635                         bz          /id0951
+               ;?     //Set ODR to 1600
+               ;?     i2cWriteValue(0x42, BMI160_I2C_ADDR, 0x2C);
+               ;?     >   i2cStart();
+0598 ---- 6000                             ld          R6, #0x0000
+0599 8606 1690                             jsr         I2cStart
+059b ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+059c ---- 70d0                             ld          R7, #208
+059d ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+059e 8606 16a5                             jsr         I2cTxByte
+05a0 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+05a1 ---- 702c                             ld          R7, #44
+05a2 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05a3 8606 16a5                             jsr         I2cTxByte
+05a5 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+05a6 ---- 7042                             ld          R7, #66
+05a7 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05a8 8606 16a5                             jsr         I2cTxByte
+05aa ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+05ab ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05ac 8606 1696                             jsr         I2cStop
+05ae ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?
+               ;?     //Start Accelerometer
+               ;?     i2cWriteValue(0x11, BMI160_I2C_ADDR, 0x7E);
+               ;?     >   i2cStart();
+05af ---- 6000                             ld          R6, #0x0000
+05b0 8606 1690                             jsr         I2cStart
+05b2 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+05b3 ---- 70d0                             ld          R7, #208
+05b4 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05b5 8606 16a5                             jsr         I2cTxByte
+05b7 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+05b8 ---- 707e                             ld          R7, #126
+05b9 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05ba 8606 16a5                             jsr         I2cTxByte
+05bc ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+05bd ---- 7011                             ld          R7, #17
+05be ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05bf 8606 16a5                             jsr         I2cTxByte
+05c1 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+05c2 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05c3 8606 1696                             jsr         I2cStop
+05c5 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Set Accel Range to +-4g
+               ;?     //i2cWriteValue(0x41, BMI160_I2C_ADDR, 0x05);
+               ;?
+               ;?     //Wait for the BMI160 to wake
+               ;?     fwDelayUs(3000);
+05c6 860b 03b8                             ld          R0, #3000
+05c8 ---- 8801                             add         R0, #1
+05c9 ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+05ca ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+               ;? } else if (sensorConfigStopBits & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+05cb 8605 05d2                         jmp         /id0953
+               /id0951:
+05cd ---- ac01                         tst         R2, #1
+05ce ---- b603                         bz          /id0987
+               ;?     // TODO
+               ;?     // Shut down whole BMI160 IC if Gyro was already disabled before
+               ;?     ifnot (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_GYRO_BV) {
+05cf ---- 08b1                             ld          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+05d0 ---- 8c02                             tst         R0, #2
+05d1 ---- be00                             bnz         /id0989
+               ;?         // TODO
+               ;?     }
+               /id0989:
+               ;? }
+               /id0987:
+               /id0953:
+               ;?
+               ;?
+               ;? //Start Gyro
+               ;? if (sensorConfigStartBits & CONFIG_ENABLE_BMI160_GYRO_BV) {
+05d2 ---- 9c02                         tst         R1, #2
+05d3 ---- b66c                         bz          /id0991
+               ;?     i2cWriteValue(0x15, BMI160_I2C_ADDR, 0x7E);
+               ;?     >   i2cStart();
+05d4 ---- 6000                             ld          R6, #0x0000
+05d5 8606 1690                             jsr         I2cStart
+05d7 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+05d8 ---- 70d0                             ld          R7, #208
+05d9 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05da 8606 16a5                             jsr         I2cTxByte
+05dc ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+05dd ---- 707e                             ld          R7, #126
+05de ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05df 8606 16a5                             jsr         I2cTxByte
+05e1 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+05e2 ---- 7015                             ld          R7, #21
+05e3 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05e4 8606 16a5                             jsr         I2cTxByte
+05e6 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+05e7 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05e8 8606 1696                             jsr         I2cStop
+05ea ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Wait for the BMI160 to wake
+               ;?     fwDelayUs(55000);
+05eb 86d6 02d8                             ld          R0, #-10536
+05ed ---- 8801                             add         R0, #1
+05ee ---- 8b49                             out         R0, [#IOP_EVCTL_PROGDLY]
+05ef ---- 8db1                             wev1        #WEVSEL_PROG_DLY
+               ;?
+               ;?     //Enable fast offset compensation for the Gyrsoscope
+               ;?     i2cWriteValue(0x40, BMI160_I2C_ADDR, 0x69);
+               ;?     >   i2cStart();
+05f0 ---- 6000                             ld          R6, #0x0000
+05f1 8606 1690                             jsr         I2cStart
+05f3 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+05f4 ---- 70d0                             ld          R7, #208
+05f5 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05f6 8606 16a5                             jsr         I2cTxByte
+05f8 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+05f9 ---- 7069                             ld          R7, #105
+05fa ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+05fb 8606 16a5                             jsr         I2cTxByte
+05fd ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+05fe ---- 7040                             ld          R7, #64
+05ff ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0600 8606 16a5                             jsr         I2cTxByte
+0602 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+0603 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0604 8606 1696                             jsr         I2cStop
+0606 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Compensate offset
+               ;?     i2cWriteValue(0x03, BMI160_I2C_ADDR, 0x7E);
+               ;?     >   i2cStart();
+0607 ---- 6000                             ld          R6, #0x0000
+0608 8606 1690                             jsr         I2cStart
+060a ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+060b ---- 70d0                             ld          R7, #208
+060c ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+060d 8606 16a5                             jsr         I2cTxByte
+060f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0610 ---- 707e                             ld          R7, #126
+0611 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0612 8606 16a5                             jsr         I2cTxByte
+0614 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0615 ---- 7003                             ld          R7, #3
+0616 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0617 8606 16a5                             jsr         I2cTxByte
+0619 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+061a ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+061b 8606 1696                             jsr         I2cStop
+061d ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?
+               ;?     //Wait for offset compensation
+               ;?     for (U16 n = 0; n < 5; n++) {
+061e ---- 0000                             ld          R0, #0
+               /id1044:
+               ;?         fwDelayUs(50000);
+061f 86c3 5350                                 ld          R5, #-15536
+0621 ---- d801                                 add         R5, #1
+0622 ---- db49                                 out         R5, [#IOP_EVCTL_PROGDLY]
+0623 ---- 8db1                                 wev1        #WEVSEL_PROG_DLY
+               ;?     }
+0624 ---- 8801                             add         R0, #1
+0625 ---- 8a05                             cmp         R0, #5
+0626 ---- aef8                             bltu        /id1044
+               ;?
+               ;?     //Enable offset for gyroscope
+               ;?     i2cWriteValue(0x80, BMI160_I2C_ADDR, 0x77);
+               ;?     >   i2cStart();
+0627 ---- 6000                             ld          R6, #0x0000
+0628 8606 1690                             jsr         I2cStart
+062a ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx((addr << 1) | I2C_OP_WRITE);
+062b ---- 70d0                             ld          R7, #208
+062c ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+062d 8606 16a5                             jsr         I2cTxByte
+062f ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(register);
+0630 ---- 7077                             ld          R7, #119
+0631 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0632 8606 16a5                             jsr         I2cTxByte
+0634 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cTx(value);
+0635 ---- 7080                             ld          R7, #128
+0636 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+0637 8606 16a5                             jsr         I2cTxByte
+0639 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;?     >   i2cStop();
+063a ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+063b 8606 1696                             jsr         I2cStop
+063d ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;? } else if (sensorConfigStopBits & CONFIG_ENABLE_BMI160_GYRO_BV) {
+063e 8606 0645                         jmp         /id0993
+               /id0991:
+0640 ---- ac02                         tst         R2, #2
+0641 ---- b603                         bz          /id1061
+               ;?     // Shut down whole BMI160 IC if Accel was already off or was disabled this cycle
+               ;?     ifnot (cfg.sensorConfig & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+0642 ---- 08b0                             ld          R0, [#imuv6SensorTask/cfg/sensorConfig]
+0643 ---- 8c01                             tst         R0, #1
+0644 ---- be00                             bnz         /id1063
+               ;?         // TODO
+               ;?     }
+               /id1063:
+               ;? }
+               /id1061:
+               /id0993:
+               ;?
+               ;? //Barometer and Temperature
+               ;? //=======================================
+               ;? if (sensorConfigStartBits & CONFIG_ENABLE_BAROMETER_BV) {
+0645 ---- 9c10                         tst         R1, #16
+0646 ---- b60f                         bz          /id1065
+               ;?     //i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), BAROM_REG_PWR_CTRL, (BAROM_CTRL_MODE_NORMAL | BAROM_CTRL_PRES_TEMP_EN));
+               ;?     i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), 0x001B, (0x0030 | 0x0003));
+0647 ---- 501b                             ld          R5, #27
+0648 ---- 4033                             ld          R4, #51
+0649 ---- 68cb                             ld          R6, [#imuv6SensorTask/state/i2cStatus]
+064a 8606 7251                             ld          R7, #/id1068
+064c 8606 7e61                             st          R7, [#i2cDeviceCommonReturn]
+064e ---- 70ec                             ld          R7, #(236 | 0)
+064f 8607 072b                             jmp         I2cDeviceWriteReg8
+               /id1068:
+0651 8606 0a5e                             ld          R0, [#i2cDeviceCommonBackupR0]
+0653 ---- 6ccb                             st          R6, [#imuv6SensorTask/state/i2cStatus]
+               ;? } else if (sensorConfigStopBits & CONFIG_ENABLE_BAROMETER_BV) {
+0654 8606 0658                         jmp         /id1067
+               /id1065:
+0656 ---- ac10                         tst         R2, #16
+0657 ---- b600                         bz          /id1074
+               ;?     // Stop Barometer and temperature
+               ;? }
+               /id1074:
+               /id1067:
+               ;?
+               ;?
+               ;? // Shift sensorConfig value for state transition detection in the next execution
+               ;? cfg.sensorConfigOld = cfg.sensorConfig;
+0658 ---- 08b0                         ld          R0, [#imuv6SensorTask/cfg/sensorConfig]
+0659 ---- 0cb1                         st          R0, [#imuv6SensorTask/cfg/sensorConfigOld]
+               ;?
+               ;?
+               ;? // Schedule the next execution
+               ;? fwScheduleTask(1);
+065a ---- 0001                         ld          R0, #1
+065b ---- 0c9e                         st          R0, [#(pFwTaskExecuteScheduleTable + 0)]
+               imuv6SensorTask/executeDone:
+065c ---- adb7                         rts
+
+
+
+
+               imuv6SensorTask/terminate:
+               ;?
+               imuv6SensorTask/terminateDone:
+065d ---- adb7                         rts
+               .segment end "Task: IMUv6 Sensor Task"
+
+
+               .segment begin "Procedure Library"
+               ; Register backup
+               i2cDeviceCommonBackupR0:
+065e ---- 0000                         dw          #0x0000
+               i2cDeviceCommonBackupR5:
+065f ---- 0000                         dw          #0x0000
+               i2cDeviceCommonBackupR7:
+0660 ---- 0000                         dw          #0x0000
+
+               ; Return address i2cDeviceXyz() procedures
+               i2cDeviceCommonReturn:
+0661 ---- 0000                         dw          #0x0000
+
+
+
+
+               ; PARAMETERS:
+               ;     R7 = I2C address
+               ;     R6 = Status flags
+               ;     R5 = Register address
+               ;
+               ; RETURN VALUES:
+               ;     R7 = Register value
+               ;     R6 = Updated status flags
+               ;
+               ; CLOBBERS:
+               ;     R5, R7
+               ;     R0 must be restored from i2cDeviceCommonBackupR0 after return
+               I2cDeviceReadReg16LsbFirst:
+                                       ; Backup R0 (return), R5 (register address) and R7 (I2C address)
+0662 8606 0e5e                         st          R0, [#i2cDeviceCommonBackupR0]
+0664 8606 5e5f                         st          R5, [#i2cDeviceCommonBackupR5]
+0666 8606 7e60                         st          R7, [#i2cDeviceCommonBackupR7]
+
+                                       ; Start condition
+0668 8606 1690                         jsr         I2cStart
+
+                                       ; Transmit the I2C address
+066a 8606 16a5                         jsr         I2cTxByte
+
+                                       ; Transmit the register address
+066c 8606 7a5f                         ld          R7, [#i2cDeviceCommonBackupR5]
+066e 8606 16a5                         jsr         I2cTxByte
+
+                                       ; If no error is indicated ...
+0670 ---- ea00                         cmp         R6, #0x0000
+0671 ---- be10                         bneq        /skipRx
+
+                                           ; Repeated start condition
+0672 8606 1687                             jsr         I2cRepeatedStart
+
+                                           ; Transmit the I2C address + R
+0674 8606 7a60                             ld          R7, [#i2cDeviceCommonBackupR7]
+0676 ---- f201                             or          R7, #0x0001
+0677 8606 16a5                             jsr         I2cTxByte
+
+                                           ; Receive MSB of the register value (transmit ACK)
+0679 ---- 7000                             ld          R7, #0x0000
+067a 8606 16c9                             jsr         I2cRxByte
+067c ---- 8d47                             ld          R0, R7
+
+                                           ; Receive the register value (transmit NAK)
+067d ---- 7001                             ld          R7, #0x0001
+067e 8606 16c9                             jsr         I2cRxByte
+0680 ---- fda0                             lsl         R7, #8
+0681 ---- fd08                             or          R7, R0
+               /skipRx:
+                                       ; Load the return address here to avoid pipeline hazard with "jmp R0"
+0682 8606 0a61                         ld          R0, [#i2cDeviceCommonReturn]
+
+                                       ; Stop condition
+0684 8606 1696                         jsr         I2cStop
+
+                                       ; Done
+0686 ---- 8db7                         jmp         R0
+
+
+
+
+               ; CLOBBERS:
+               ;     R5
+               I2cRepeatedStart:
+                                       ; Wait T_LOW (SDA is already pull-up)
+0687 ---- 53f4                         ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (1))
+0688 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SCL = pull-up
+068a ---- 65bc                         iobset      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                       ; Wait for SCL stretching to end or time out
+068b 8606 16f1                         jsr         I2cWaitSclStretch
+
+                                       ; Wait T_SU_STA
+068d ---- 53f4                         ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (1))
+068e 8606 16ee                         jsr         I2cWaitDelay
+               I2cStart:
+                                       ; SDA = driven low
+0690 ---- 46bc                         iobclr      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+
+                                       ; Wait T_HD_STA
+0691 ---- 53f8                         ld          R5, #-((I2C_BASE_DELAY) - (1))
+0692 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SCL = driven low
+0694 ---- 45bc                         iobclr      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                       ; Done
+0695 ---- adb7                         rts
+
+
+
+
+               ; CLOBBERS:
+               ;     R5
+               I2cStop:
+                                       ; SDA = driven low
+0696 ---- 46bc                         iobclr      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+
+                                       ; Wait T_LOW
+0697 ---- 53f4                         ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (1))
+0698 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SCL = pull-up
+069a ---- 65bc                         iobset      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                       ; Wait for SCL stretching to end or time out
+069b 8606 16f1                         jsr         I2cWaitSclStretch
+
+                                       ; Wait T_SU_STO
+069d ---- 53fd                         ld          R5, #-((I2C_BASE_DELAY) - (I2C_WAIT_STRETCH_DELAY + 1))
+069e 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SDA = pull-up
+06a0 ---- 66bc                         iobset      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+
+                                       ; Wait T_BUF
+06a1 ---- 53f5                         ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (2))
+06a2 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; Done
+06a4 ---- adb7                         rts
+
+
+
+
+               ; PARAMETERS:
+               ;     R7 = TX byte shift register
+               ;     R6 = Status flags
+               ;
+               ; RETURN VALUES:
+               ;     R7 = Updated TX byte shift register
+               ;     R6 = Updated status flags
+               ;
+               ; CLOBBERS:
+               ;     R5
+               I2cTxByte:
+                                       ; Bail out if an error has occurred
+06a5 ---- ea00                         cmp         R6, #0
+06a6 ---- be21                         bnz         /done
+
+
+                                       ; Transmit each bit in the data byte ...
+06a7 ---- b511                         loop        #8, /byteLoopEnd
+
+                                           ; Output the bit to SDA
+06a8 ---- fda1                             lsl         R7, #1
+06a9 8601 fc00                             tst         R7, #0x0100
+06ab ---- b602                             bz          /dataSdaLow
+06ac ---- 66bc /dataSdaHigh:                   iobset      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+06ad ---- 8e02                             bra         /dataSdaDone
+06ae ---- 46bc /dataSdaLow:                    iobclr      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+06af ---- fd47                             nop
+               /dataSdaDone:
+                                           ; Wait T_LOW
+06b0 ---- 53fa                             ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (7))
+06b1 8606 16ee                             jsr         I2cWaitDelay
+
+                                           ; SCL = pull-up
+06b3 ---- 65bc                             iobset      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                           ; Wait for SCL stretching to end or time out
+06b4 8606 16f1                             jsr         I2cWaitSclStretch
+
+                                           ; Wait T_HIGH
+06b6 ---- 53fd                             ld          R5, #-(I2C_BASE_DELAY - (I2C_WAIT_STRETCH_DELAY + 1))
+06b7 8606 16ee                             jsr         I2cWaitDelay
+
+                                           ; SCL = driven low
+06b9 ---- 45bc                             iobclr      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+               /byteLoopEnd:
+
+                                       ; Receive the ACK bit
+                                       ; SDA = pull-up
+06ba ---- 66bc                         iobset      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+
+                                       ; Wait T_LOW
+06bb ---- 53f4                         ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (1))
+06bc 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SCL = pull-up
+06be ---- 65bc                         iobset      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                       ; Wait for SCL stretching to end or time out
+06bf 8606 16f1                         jsr         I2cWaitSclStretch
+
+                                       ; Wait T_HIGH
+06c1 ---- 53fa                         ld          R5, #-((I2C_BASE_DELAY) - (3))
+06c2 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; Read and store the SDA value in the status word
+06c4 ---- 26c0                         iobtst      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SDA >> 3))]
+06c5 ---- a601                         biob0       /ackSdaLow
+06c6 ---- e201                             or          R6, #0x01
+               /ackSdaLow:
+                                       ; SCL = driven low
+06c7 ---- 45bc                         iobclr      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+
+               /done:                  ; Done
+06c8 ---- adb7                         rts
+
+
+
+
+               ; PARAMETERS:
+               ;     R7 = Acknowledgment bit value, 0x0000 to transmit ACK, 0x0001 to transmit NAK
+               ;     R6 = Status flags
+               ;
+               ; RETURN VALUES:
+               ;     R7 = RX byte shift register
+               ;     R6 = Updated status flags
+               ;
+               ; CLOBBERS:
+               ;     R5
+               I2cRxByte:
+                                       ; Bail out if an error has occurred
+06c9 ---- ea00                         cmp         R6, #0
+06ca ---- be22                         bnz         /done
+
+
+                                       ; Receive each bit in the data byte ...
+06cb ---- b50e                         loop        #8, /byteLoopEnd
+
+                                           ; SDA = pull-up
+06cc ---- 66bc                             iobset      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+
+                                           ; Wait T_LOW
+06cd ---- 53f5                             ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (2))
+06ce 8606 16ee                             jsr         I2cWaitDelay
+
+                                           ; SCL = pull-up
+06d0 ---- 65bc                             iobset      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                           ; Wait for SCL stretching to end or time out
+06d1 8606 16f1                             jsr         I2cWaitSclStretch
+
+                                           ; Wait T_HIGH
+06d3 ---- 53ff                             ld          R5, #-((I2C_BASE_DELAY) - (I2C_WAIT_STRETCH_DELAY + 3))
+06d4 8606 16ee                             jsr         I2cWaitDelay
+
+                                           ; Read and store SDA
+06d6 ---- fda1                             lsl         R7, #1
+06d7 ---- 26c0                             iobtst      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SDA >> 3))]
+06d8 ---- a601                             biob0       /dataSdaLow
+06d9 ---- f201                                 or          R7, #0x01
+               /dataSdaLow:
+                                           ; SCL = driven low
+06da ---- 45bc                             iobclr      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+               /byteLoopEnd:
+
+                                       ; Transmit the ACK bit, which is now in bit 8 of the shift register
+                                       ; Output the bit to SDA
+06db 8601 fc00                         tst         R7, #0x0100
+06dd ---- b602                         bz          /ackSdaLow
+06de ---- 66bc /ackSdaHigh:                iobset      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+06df ---- 8e02                         bra         /ackSdaDone
+06e0 ---- 46bc /ackSdaLow:                 iobclr      #(AUXIO_I2C_SDA & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SDA >> 3))]
+06e1 ---- fd47                         nop
+               /ackSdaDone:
+                                       ; Wait T_LOW
+06e2 ---- 53f9                         ld          R5, #-((I2C_BASE_DELAY + I2C_EXT_DELAY) - (6))
+06e3 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SCL = pull-up
+06e5 ---- 65bc                         iobset      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                       ; Wait for SCL stretching to end or time out
+06e6 8606 16f1                         jsr         I2cWaitSclStretch
+
+                                       ; Wait T_HIGH
+06e8 ---- 53fd                         ld          R5, #-((I2C_BASE_DELAY) - (I2C_WAIT_STRETCH_DELAY + 1))
+06e9 8606 16ee                         jsr         I2cWaitDelay
+
+                                       ; SCL = driven low
+06eb ---- 45bc                         iobclr      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODOUT + (AUXIO_I2C_SCL >> 3))]
+
+                                       ; Mask the ACK bit in the received data
+06ec ---- f0ff                         and         R7, #0xFF
+
+
+               /done:                  ; Done
+06ed ---- adb7                         rts
+
+
+
+
+               ; PARAMETERS
+               ;     R5 = Delay excluding the I2cWaitDelay() call, in instruction cycles
+               ;
+               ; CLOBBERS:
+               ;     R5
+               I2cWaitDelay:
+                                       ; Wait for the specified number of cycles
+06ee ---- d802 /waitLoop:                  add         R5, #2
+06ef ---- defe                         bneg        /waitLoop
+
+                                       ; Done
+06f0 ---- adb7                         rts
+
+
+
+
+               ; PARAMETERS:
+               ;     R6 = Status flags
+               ;
+               ; RETURN VALUES:
+               ;     R6 = Updated status flags
+               ;
+               ; CLOBBERS:
+               ;     R5
+               I2cWaitSclStretch:
+                                       ; Load the timeout (up to 20 ms) loop counter = configured number of us
+06f1 86fc 5018                         ld          R5, #(-I2C_STRETCH_TIMEOUT_US)
+               /waitLoop:
+                                           ; If SCL is high, we're done
+06f3 ---- 25c0                             iobtst      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SCL >> 3))]
+06f4 ---- ae0b                             biob1       /done
+                                           ; Unroll the loop to 12 instructions = 1 per loop for faster response
+06f5 ---- 25c0                             iobtst      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SCL >> 3))]
+06f6 ---- ae09                             biob1       /done
+06f7 ---- 25c0                             iobtst      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SCL >> 3))]
+06f8 ---- ae07                             biob1       /done
+06f9 ---- 25c0                             iobtst      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SCL >> 3))]
+06fa ---- ae05                             biob1       /done
+06fb ---- 25c0                             iobtst      #(AUXIO_I2C_SCL & 0x7), [#(IOP_AIODIO0_GPIODIN + (AUXIO_I2C_SCL >> 3))]
+06fc ---- ae03                             biob1       /done
+
+06fd ---- d801                         add         R5, #1;
+06fe ---- bef4                         bnz         /waitLoop
+
+               /timeout:               ; Timeout has occurred, so OR it into the flags and bail out
+06ff ---- e202                         or          R6, #0x0002
+
+               /done:                  ; Done
+0700 ---- adb7                         rts
+
+
+
+
+               ; PARAMETERS:
+               ;     R7 = AUX I/O index (19-26)
+               ;
+               ; CLOBBERS:
+               ;     R6, R7
+               AdccompbSelectGpioInput:
+                                       ; Make sure that the AUX I/O index is valid
+0701 ---- f8ed                         add         R7, #-ADI_ANALOG_MUX_AUXIO_BASE_INDEX
+0702 ---- f007                         and         R7, #0x0007
+
+                                       ; Disconnect all signals
+0703 86ff 63f8                         ld          R6, #(BV_ADI16_MUX2_ADCCOMPB_IN | BV_ADI16_MUX3_ADCCOMPB_IN)
+0705 ---- eba3                         out         R6, [#IOP_ADICLR_MUX2_MUX3]
+
+                                       ; Connect the specified GPIO
+0706 8680 6000                         ld          R6, #ADI16_MUX3_ADCCOMPB_IN_AUXIO0
+0708 ---- ed8f                         lsr         R6, R7
+0709 ---- eb9b                         out         R6, [#IOP_ADISET_MUX2_MUX3]
+
+                                       ; Flush the ADI interface
+070a ---- eb9b                         out         R6, [#IOP_ADISET_MUX2_MUX3]
+
+070b ---- adb7                         rts
+
+
+
+
+               ; PARAMETERS:
+               ;     R7 = I2C address
+               ;     R6 = Status flags
+               ;     R5 = Register address
+               ;
+               ; RETURN VALUES:
+               ;     R7 = Register value
+               ;     R6 = Updated status flags
+               ;
+               ; CLOBBERS:
+               ;     R5, R7
+               ;     R0 must be restored from i2cDeviceCommonBackupR0 after return
+               I2cDeviceReadReg8:
+                                       ; Backup R0 (return), R5 (register address) and R7 (I2C address)
+070c 8606 0e5e                         st          R0, [#i2cDeviceCommonBackupR0]
+070e 8606 5e5f                         st          R5, [#i2cDeviceCommonBackupR5]
+0710 8606 7e60                         st          R7, [#i2cDeviceCommonBackupR7]
+
+                                       ; Start condition
+0712 8606 1690                         jsr         I2cStart
+
+                                       ; Transmit the I2C address
+0714 8606 16a5                         jsr         I2cTxByte
+
+                                       ; Transmit the register address
+0716 8606 7a5f                         ld          R7, [#i2cDeviceCommonBackupR5]
+0718 8606 16a5                         jsr         I2cTxByte
+
+                                       ; If no error is indicated ...
+071a ---- ea00                         cmp         R6, #0x0000
+071b ---- be0a                         bneq        /skipRx
+
+                                           ; Repeated start condition
+071c 8606 1687                             jsr         I2cRepeatedStart
+
+                                           ; Transmit the I2C address + R
+071e 8606 7a60                             ld          R7, [#i2cDeviceCommonBackupR7]
+0720 ---- f201                             or          R7, #0x0001
+0721 8606 16a5                             jsr         I2cTxByte
+
+                                           ; Receive the register value (transmit NAK)
+0723 ---- 7001                             ld          R7, #0x0001
+0724 8606 16c9                             jsr         I2cRxByte
+               /skipRx:
+                                       ; Load the return address here to avoid pipeline hazard with "jmp R0"
+0726 8606 0a61                         ld          R0, [#i2cDeviceCommonReturn]
+
+                                       ; Stop condition
+0728 8606 1696                         jsr         I2cStop
+
+                                       ; Done
+072a ---- 8db7                         jmp         R0
+
+
+
+
+               ; PARAMETERS:
+               ;     R7 = I2C address
+               ;     R6 = Status flags
+               ;     R5 = Register address
+               ;     R4 = Register value
+               ;
+               ; RETURN VALUES:
+               ;     R6 = Updated status flags
+               ;
+               ; CLOBBERS:
+               ;     R5, R7
+               ;     R0 must be restored from i2cDeviceCommonBackupR0 after return
+               I2cDeviceWriteReg8:
+                                       ; Backup R0 (return) and R5 (register address)
+072b 8606 0e5e                         st          R0, [#i2cDeviceCommonBackupR0]
+072d 8606 5e5f                         st          R5, [#i2cDeviceCommonBackupR5]
+
+                                       ; Start condition
+072f 8606 1690                         jsr         I2cStart
+
+                                       ; Transmit the I2C address
+0731 8606 16a5                         jsr         I2cTxByte
+
+                                       ; Transmit the register address
+0733 8606 7a5f                         ld          R7, [#i2cDeviceCommonBackupR5]
+0735 8606 16a5                         jsr         I2cTxByte
+
+                                       ; Transmit the register value
+0737 ---- fd44                         ld          R7, R4
+0738 8606 16a5                         jsr         I2cTxByte
+
+                                       ; Load the return address here to avoid pipeline hazard with "jmp R0"
+073a 8606 0a61                         ld          R0, [#i2cDeviceCommonReturn]
+
+                                       ; Stop condition
+073c 8606 1696                         jsr         I2cStop
+
+                                       ; Done
+073e ---- 8db7                         jmp         R0
+
+
+
+
+               ; CLOBBERS:
+               ;     R7
+               AdcDisable:
+                                       ; Disable the ADC reference
+073f ---- 7079                         ld          R7, #((ADI16_ADCREF_EN | ADI16_ADCREF_REF_ON_IDLE) | (ADI16_ADCREF_SRC | (ADI16_ADCREF_EXT | ADI16_ADCREF_IOMUX)))
+0740 ---- fba7                         out         R7, [#IOP_ADICLR_ADCREF]
+
+                                       ; Assert reset and disable the ADC
+0741 ---- 71fb                         ld          R7, #((ADI16_ADC_EN | ADI16_ADC_RESET_N) | (BV_ADI16_ADC_SMPL_CYCLE_EXP | (BV_ADI16_ADC_SMPL_MODE | ADI16_ADC_SCALE_DIS)))
+0742 ---- fba6                         out         R7, [#IOP_ADICLR_ADC]
+
+                                       ; Flush the ADI interface
+0743 ---- fba6                         out         R7, [#IOP_ADICLR_ADC]
+
+                                       ; Disable the ADC clock (no need to wait since IOB_SYSIF_ADCCLKCTL_ACK goes low immediately)
+0744 ---- 4467                         iobclr      #IOB_SYSIF_ADCCLKCTL_REQ, [#IOP_SYSIF_ADCCLKCTL]
+
+                                       ; Disable the ADC data interface
+0745 ---- 448e                         iobclr      #0, [#IOP_ANAIF_ADCCTL]
+
+0746 ---- adb7                         rts
+               .segment end "Procedure Library"
+
+
+; Generated by DESKTOP-HLPRRTA at 2022-06-21 17:28:19.282

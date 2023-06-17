@@ -1,0 +1,57 @@
+@ECHO OFF
+REM This file is part of the OpenAXES project, a wireless IMU.
+REM Copyright 2023 Nils Stanislawski and Fritz Webering
+REM
+REM This program is free software: you can redistribute it and/or modify
+REM it under the terms of the GNU Lesser General Public License as published by
+REM the Free Software Foundation, either version 3 of the License, or
+REM (at your option) any later version.
+REM
+REM This program is distributed in the hope that it will be useful,
+REM but WITHOUT ANY WARRANTY; without even the implied warranty of
+REM MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+REM GNU Lesser General Public License for more details.
+REM
+REM You should have received a copy of the GNU Lesser General Public License
+REM along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+REM Date and time code by "nightcoder" https://stackoverflow.com/a/16349176 CC-BY-SA-4.0
+:: Check WMIC is available
+WMIC.EXE Alias /? >NUL 2>&1 || GOTO s_error
+
+:: Use WMIC to retrieve date and time
+FOR /F "skip=1 tokens=1-6" %%G IN ('WMIC Path Win32_LocalTime Get Day^,Hour^,Minute^,Month^,Second^,Year /Format:table') DO (
+   IF "%%~L"=="" goto s_done
+      Set _yyyy=%%L
+      Set _mm=00%%J
+      Set _dd=00%%G
+      Set _hour=00%%H
+      SET _minute=00%%I
+      SET _second=00%%K
+)
+:s_done
+
+:: Pad digits with leading zeros
+Set _mm=%_mm:~-2%
+Set _dd=%_dd:~-2%
+Set _hour=%_hour:~-2%
+Set _minute=%_minute:~-2%
+Set _second=%_second:~-2%
+
+
+@echo #define BUILD_DATE_TIME_UINT32 "%_yyyy%%_mm%%_dd%%_hour%%_minute%" > build_version.h
+@echo #define BUILD_DATE "%_yyyy%%_mm%%_dd%" >> build_version.h
+@echo #define BUILD_TIME "%_hour%%_minute%%_second%" >> build_version.h
+@echo #define BUILD_DATE_TIME "%_yyyy%%_mm%%_dd%-%_hour%%_minute%%_second%" >> build_version.h
+
+REM TODO: Fix this to produce the same results as the linux version
+for /f "usebackq tokens=*" %%i in (`git describe --tags --dirty`) do @echo #define BUILD_VERSION_STRING "%%i" >> build_version.h
+
+GOTO end
+
+:s_error
+echo WMIC is not available, cannot get date/time
+GOTO end
+
+:end

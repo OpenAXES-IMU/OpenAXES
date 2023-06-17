@@ -1,0 +1,14 @@
+/Release/
+/Debug/
+/src/
+/Tools/
+/Release/
+/build_version.h
+/targetConfigs/
+/.launches/
+/.settings/
+/.xdchelp
+/.config/
+/.metadata/
+/.jxbrowser-data/
+

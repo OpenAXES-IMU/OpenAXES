@@ -1,0 +1,914 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="IMS IMUv6 Sensor Reader" version="2.9.0.208">
+    <desc><![CDATA[Reads various sensors on the IMS IMUv6 Board]]></desc>
+    <pattr name="Apply default power mode">0</pattr>
+    <pattr name="Board">None</pattr>
+    <pattr name="Chip name">CC2652R1F</pattr>
+    <pattr name="Chip package">QFN48 7x7 RGZ</pattr>
+    <pattr name="Chip revision">E</pattr>
+    <pattr name="Clock in active mode">0</pattr>
+    <pattr name="Code prefix"></pattr>
+    <pattr name="Default power mode">0</pattr>
+    <pattr name="Operating system">TI-RTOS</pattr>
+    <pattr name="Output directory">./output</pattr>
+    <pattr name="RTC tick interval (16.16 format)">2000</pattr>
+    <pattr name="Run-time logging UART RX pin">DIO1</pattr>
+    <pattr name="Run-time logging UART TX pin">DIO0</pattr>
+    <task name="IMUv6 Sensor Task">
+        <desc><![CDATA[Reads the values of various sensors]]></desc>
+        <tattr name="ADXL355_AXIS_COUNT" type="dec" content="const" scope="task" min="0" max="65535">3</tattr>
+        <tattr name="ADXL355_AXIS_WORDS" desc="How many 16bit words are in the axis'?" type="expr" content="const" scope="task" min="0" max="65535">ADXL355_AXIS_COUNT * 2</tattr>
+        <tattr name="ADXL355_I2C_ADDR" desc="i2c address of the adxl355 accelerometer (normal addr would be 0x1D)" type="hex" content="const" scope="task" min="0000" max="ffff">001d</tattr>
+        <tattr name="ADXL355_SPI_READ" type="expr" content="const" scope="task" min="0" max="65535">1</tattr>
+        <tattr name="ADXL355_SPI_WRITE" type="expr" content="const" scope="task" min="0" max="65535">0x0000</tattr>
+        <tattr name="BAROM_I2C_ADDR" type="expr_hex" content="const" scope="task" min="0" max="65535">0x0076</tattr>
+        <tattr name="BATTERY_CHARGE_TERMINATION_CURRENT" desc="Charging termination current in 0.1 mA (e.g. 24 == 2.4 mA)" type="expr" content="const" scope="task" min="0" max="65535">24</tattr>
+        <tattr name="BATTERY_CHARGE_TERMINATION_REG_VALUE" desc="Charge termination current, scaled to CSP-CSN voltage ADV LSBs (1.5625 uV per LSB)" type="expr_hex" content="const" scope="task" min="0" max="65535">((BATTERY_CHARGE_TERMINATION_CURRENT * BATTERY_SENSE_RESISTOR) * 10000) / 156250</tattr>
+        <tattr name="BATTERY_DESIGNED_CAP" desc="Designed Capacity in mAh" type="expr" content="const" scope="task" min="0" max="65535">120</tattr>
+        <tattr name="BATTERY_DESIGNED_CAP_DIV_BY_32" type="expr_hex" content="const" scope="task" min="0" max="65535">BATTERY_DESIGNED_CAP/32</tattr>
+        <tattr name="BATTERY_DESIGNED_CAP_REGISTER_VALUE" desc="1 LSB = 0.5mA with a 0.010Ω sense resistor." type="expr" content="const" scope="task" min="0" max="65535">(BATTERY_DESIGNED_CAP * BATTERY_SENSE_RESISTOR) / 5</tattr>
+        <tattr name="BATTERY_EMPTY_VOLTAGE" desc="In mV" type="expr" content="const" scope="task" min="0" max="65535">3000</tattr>
+        <tattr name="BATTERY_EMPTY_VOLTAGE_AND_BATTERY_RECOVERY_VOLTAGE_REGISTER_VALUE" type="expr_hex" content="const" scope="task" min="0" max="65535">(((BATTERY_EMPTY_VOLTAGE/10) &lt;&lt; 7) | (BATTERY_RECOVERY_VOLTAGE/40))</tattr>
+        <tattr name="BATTERY_RECOVERY_VOLTAGE" desc="In mV" type="dec" content="const" scope="task" min="0" max="65535">3880</tattr>
+        <tattr name="BATTERY_SENSE_RESISTOR" desc="Battery current sense resistor in mOhm, used only for calculating charge termination current" type="expr" content="const" scope="task" min="0" max="65535">10</tattr>
+        <tattr name="BMI160_ACCEL_AXIS_COUNT" type="expr" content="const" scope="task" min="0" max="65535">3</tattr>
+        <tattr name="BMI160_GYRO_AXIS_COUNT" type="expr" content="const" scope="task" min="0" max="65535">3</tattr>
+        <tattr name="BMI160_I2C_ADDR" type="expr_hex" content="const" scope="task" min="0" max="65535">0x0068</tattr>
+        <tattr name="CONFIG_ENABLE_ADXL355_ACCEL_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">4</tattr>
+        <tattr name="CONFIG_ENABLE_ANALOG_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">0x0020</tattr>
+        <tattr name="CONFIG_ENABLE_BAROMETER_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">0x0010</tattr>
+        <tattr name="CONFIG_ENABLE_BATTERY_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">0x0040</tattr>
+        <tattr name="CONFIG_ENABLE_BMI160_ACCEL_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">1</tattr>
+        <tattr name="CONFIG_ENABLE_BMI160_GYRO_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">2</tattr>
+        <tattr name="CONFIG_ENABLE_MAGNETOMETER_BV" type="expr_hex" content="const" scope="task" min="0" max="65535">8</tattr>
+        <tattr name="KX1221037_AXIS_COUNT" type="dec" content="const" scope="task" min="0" max="65535">3</tattr>
+        <tattr name="KX1221037_I2C_ADDR" type="hex" content="const" scope="task" min="0000" max="ffff">001f</tattr>
+        <tattr name="MAX17055_I2C_ADDR" desc="Fuel Gauge I2C Address" type="hex" content="const" scope="task" min="0000" max="ffff">0036</tattr>
+        <tattr name="MMC34160PJ_AXIS_COUNT" type="dec" content="const" scope="task" min="0" max="65535">3</tattr>
+        <tattr name="MMC34160PJ_I2C_ADDR" desc="I2C Address of the Magnetometer MMC34160PJ" type="hex" content="const" scope="task" min="0000" max="ffff">0030</tattr>
+        <tattr name="cfg.batterySamplingInterval" desc="How many timer ticks to wait between sampling battery information" type="expr" content="struct" scope="task" min="0" max="65535">100</tattr>
+        <tattr name="cfg.resetSensors" desc="reset sensors when != 0" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="cfg.sensorConfig" desc="Determines which sensors should be enabled or disabled" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="cfg.sensorConfigOld" desc="Previous value of sensorConfig, used for tracking state changes to enable/disable sensors" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.adcValue" desc="analog external sensor exposed pads " type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.adxl355axis" desc="ADXL355 Axis values x[0:1], y[0:1], z[0:1]" size="ADXL355_AXIS_WORDS" type="dec" content="struct_array" scope="task" min="-32768" max="32767">0</tattr>
+        <tattr name="output.batteryCapacity" type="dec" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.batteryCapacityFull" desc="Battery capacity in units of 0.5 mAh per LSB (with 0.01 Ohm sense resistor)" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.batteryCurrent" desc="Battery current in steps of 156.25 uA per LSB (with 0.01 Ohm sense resistor)" type="expr" content="struct" scope="task" min="-32768" max="32767">0</tattr>
+        <tattr name="output.batteryCurrentAverage" desc="Battery current (averaged over time) in steps of 156.25 uA per LSB (with 0.01 Ohm sense resistor)" type="expr" content="struct" scope="task" min="-32768" max="32767">0</tattr>
+        <tattr name="output.batteryStateOfCharge" type="dec" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.batteryVoltage" desc="Battery voltage in steps of 0.078125 mV per LSB" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.bmi160accelaxis" desc="BMI160 acceleration axis (x,y,z)" size="BMI160_ACCEL_AXIS_COUNT" type="expr" content="struct_array" scope="task" min="-32768" max="32767">0</tattr>
+        <tattr name="output.bmi160gyroaxis" desc="BMI160 Gyroscope Axis (x,y,z)" size="BMI160_GYRO_AXIS_COUNT" type="expr" content="struct_array" scope="task" min="-32768" max="32767">0</tattr>
+        <tattr name="output.mmc34160pjaxis" desc="Magnetometer" size="MMC34160PJ_AXIS_COUNT" type="dec" content="struct_array" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.pressure" desc="barometer air pressure" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="output.temp" desc="temperature" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="state.batterySamplingWaitCount" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <tattr name="state.status" type="expr" content="struct" scope="task" min="0" max="65535">0</tattr>
+        <resource_ref name="ADC" enabled="1"/>
+        <resource_ref name="AON Domain Functionality" enabled="0"/>
+        <resource_ref name="Accumulator-Based Math" enabled="0"/>
+        <resource_ref name="Analog Open-Drain Pins" enabled="0"/>
+        <resource_ref name="Analog Open-Source Pins" enabled="0"/>
+        <resource_ref name="Analog Pins" enabled="1">
+            <io_usage name="ADC_READ" label="adcpin">
+                <uattr name="Pin count">0</uattr>
+                <uattr name="Pin/0000">DIO28</uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="COMPA" enabled="0"/>
+        <resource_ref name="COMPA Event Trigger" enabled="0"/>
+        <resource_ref name="COMPB" enabled="0"/>
+        <resource_ref name="COMPB Event Trigger" enabled="0"/>
+        <resource_ref name="Delay Insertion" enabled="1"/>
+        <resource_ref name="Differential Output Pins" enabled="0"/>
+        <resource_ref name="Digital Input Pins" enabled="0">
+            <io_usage name="KX1221037_IRQ1" label="Interrupt pin 1 of the KX1221037 Accel">
+                <uattr name="Configuration on initialization">-1</uattr>
+                <uattr name="Configuration on uninitialization">-1</uattr>
+                <uattr name="Pin count">0</uattr>
+                <uattr name="Pin/0000">DIO8</uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+                <uattr name="Pin/0008"></uattr>
+                <uattr name="Pin/0009"></uattr>
+                <uattr name="Pin/0010"></uattr>
+                <uattr name="Pin/0011"></uattr>
+                <uattr name="Pin/0012"></uattr>
+                <uattr name="Pin/0013"></uattr>
+                <uattr name="Pin/0014"></uattr>
+                <uattr name="Pin/0015"></uattr>
+                <uattr name="Pin/0016"></uattr>
+                <uattr name="Pin/0017"></uattr>
+                <uattr name="Pin/0018"></uattr>
+                <uattr name="Pin/0019"></uattr>
+                <uattr name="Pin/0020"></uattr>
+                <uattr name="Pin/0021"></uattr>
+                <uattr name="Pin/0022"></uattr>
+                <uattr name="Pin/0023"></uattr>
+                <uattr name="Pin/0024"></uattr>
+                <uattr name="Pin/0025"></uattr>
+                <uattr name="Pin/0026"></uattr>
+                <uattr name="Pin/0027"></uattr>
+                <uattr name="Pin/0028"></uattr>
+                <uattr name="Pin/0029"></uattr>
+                <uattr name="Pin/0030"></uattr>
+                <uattr name="Pin/0031"></uattr>
+            </io_usage>
+            <io_usage name="BMI160_IRQ1" label="BMI160 6DOF Sensor Interrupt Pin 1">
+                <uattr name="Configuration on initialization">-1</uattr>
+                <uattr name="Configuration on uninitialization">-1</uattr>
+                <uattr name="Pin count">0</uattr>
+                <uattr name="Pin/0000">DIO10</uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+                <uattr name="Pin/0008"></uattr>
+                <uattr name="Pin/0009"></uattr>
+                <uattr name="Pin/0010"></uattr>
+                <uattr name="Pin/0011"></uattr>
+                <uattr name="Pin/0012"></uattr>
+                <uattr name="Pin/0013"></uattr>
+                <uattr name="Pin/0014"></uattr>
+                <uattr name="Pin/0015"></uattr>
+                <uattr name="Pin/0016"></uattr>
+                <uattr name="Pin/0017"></uattr>
+                <uattr name="Pin/0018"></uattr>
+                <uattr name="Pin/0019"></uattr>
+                <uattr name="Pin/0020"></uattr>
+                <uattr name="Pin/0021"></uattr>
+                <uattr name="Pin/0022"></uattr>
+                <uattr name="Pin/0023"></uattr>
+                <uattr name="Pin/0024"></uattr>
+                <uattr name="Pin/0025"></uattr>
+                <uattr name="Pin/0026"></uattr>
+                <uattr name="Pin/0027"></uattr>
+                <uattr name="Pin/0028"></uattr>
+                <uattr name="Pin/0029"></uattr>
+                <uattr name="Pin/0030"></uattr>
+                <uattr name="Pin/0031"></uattr>
+            </io_usage>
+            <io_usage name="BMI160_IRQ2" label="BMI160 6DOF Sensor Interrupt Pin 2">
+                <uattr name="Configuration on initialization">-1</uattr>
+                <uattr name="Configuration on uninitialization">-1</uattr>
+                <uattr name="Pin count">0</uattr>
+                <uattr name="Pin/0000">DIO9</uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+                <uattr name="Pin/0008"></uattr>
+                <uattr name="Pin/0009"></uattr>
+                <uattr name="Pin/0010"></uattr>
+                <uattr name="Pin/0011"></uattr>
+                <uattr name="Pin/0012"></uattr>
+                <uattr name="Pin/0013"></uattr>
+                <uattr name="Pin/0014"></uattr>
+                <uattr name="Pin/0015"></uattr>
+                <uattr name="Pin/0016"></uattr>
+                <uattr name="Pin/0017"></uattr>
+                <uattr name="Pin/0018"></uattr>
+                <uattr name="Pin/0019"></uattr>
+                <uattr name="Pin/0020"></uattr>
+                <uattr name="Pin/0021"></uattr>
+                <uattr name="Pin/0022"></uattr>
+                <uattr name="Pin/0023"></uattr>
+                <uattr name="Pin/0024"></uattr>
+                <uattr name="Pin/0025"></uattr>
+                <uattr name="Pin/0026"></uattr>
+                <uattr name="Pin/0027"></uattr>
+                <uattr name="Pin/0028"></uattr>
+                <uattr name="Pin/0029"></uattr>
+                <uattr name="Pin/0030"></uattr>
+                <uattr name="Pin/0031"></uattr>
+            </io_usage>
+            <io_usage name="ADXL355_IRQ1" label="Interrupt pin 1 of the ADXL355 Accel">
+                <uattr name="Configuration on initialization">-1</uattr>
+                <uattr name="Configuration on uninitialization">-1</uattr>
+                <uattr name="Pin count">0</uattr>
+                <uattr name="Pin/0000">DIO12</uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+                <uattr name="Pin/0008"></uattr>
+                <uattr name="Pin/0009"></uattr>
+                <uattr name="Pin/0010"></uattr>
+                <uattr name="Pin/0011"></uattr>
+                <uattr name="Pin/0012"></uattr>
+                <uattr name="Pin/0013"></uattr>
+                <uattr name="Pin/0014"></uattr>
+                <uattr name="Pin/0015"></uattr>
+                <uattr name="Pin/0016"></uattr>
+                <uattr name="Pin/0017"></uattr>
+                <uattr name="Pin/0018"></uattr>
+                <uattr name="Pin/0019"></uattr>
+                <uattr name="Pin/0020"></uattr>
+                <uattr name="Pin/0021"></uattr>
+                <uattr name="Pin/0022"></uattr>
+                <uattr name="Pin/0023"></uattr>
+                <uattr name="Pin/0024"></uattr>
+                <uattr name="Pin/0025"></uattr>
+                <uattr name="Pin/0026"></uattr>
+                <uattr name="Pin/0027"></uattr>
+                <uattr name="Pin/0028"></uattr>
+                <uattr name="Pin/0029"></uattr>
+                <uattr name="Pin/0030"></uattr>
+                <uattr name="Pin/0031"></uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="Digital Open-Drain Pins" enabled="0"/>
+        <resource_ref name="Digital Open-Source Pins" enabled="0"/>
+        <resource_ref name="Digital Output Pins" enabled="0">
+            <io_usage name="LED_CTRL" label="LED control Pin">
+                <uattr name="Configuration on uninitialization">-1</uattr>
+                <uattr name="Output drive strength">0</uattr>
+                <uattr name="Output value on initialization">0</uattr>
+                <uattr name="Pin count">0</uattr>
+                <uattr name="Pin/0000">DIO22</uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+                <uattr name="Pin/0008"></uattr>
+                <uattr name="Pin/0009"></uattr>
+                <uattr name="Pin/0010"></uattr>
+                <uattr name="Pin/0011"></uattr>
+                <uattr name="Pin/0012"></uattr>
+                <uattr name="Pin/0013"></uattr>
+                <uattr name="Pin/0014"></uattr>
+                <uattr name="Pin/0015"></uattr>
+                <uattr name="Pin/0016"></uattr>
+                <uattr name="Pin/0017"></uattr>
+                <uattr name="Pin/0018"></uattr>
+                <uattr name="Pin/0019"></uattr>
+                <uattr name="Pin/0020"></uattr>
+                <uattr name="Pin/0021"></uattr>
+                <uattr name="Pin/0022"></uattr>
+                <uattr name="Pin/0023"></uattr>
+                <uattr name="Pin/0024"></uattr>
+                <uattr name="Pin/0025"></uattr>
+                <uattr name="Pin/0026"></uattr>
+                <uattr name="Pin/0027"></uattr>
+                <uattr name="Pin/0028"></uattr>
+                <uattr name="Pin/0029"></uattr>
+                <uattr name="Pin/0030"></uattr>
+                <uattr name="Pin/0031"></uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="Dynamic Power Control" enabled="0"/>
+        <resource_ref name="GPIO Event Trigger" enabled="0"/>
+        <resource_ref name="I2C Master" enabled="1">
+            <rattr name="SCL frequency">0</rattr>
+            <rattr name="SCL stretch timeout">1000</rattr>
+            <io_usage>
+                <uattr name="Output drive strength">1</uattr>
+                <uattr name="SCL pin/0000">DIO1</uattr>
+                <uattr name="SDA pin/0000">DIO0</uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="ISRC" enabled="0"/>
+        <resource_ref name="LCD Controller" enabled="0">
+            <rattr name="Waveform state count">8</rattr>
+            <io_usage>
+                <uattr name="Output drive strength">0</uattr>
+                <uattr name="Pin count">20</uattr>
+                <uattr name="Pin/0000"></uattr>
+                <uattr name="Pin/0001"></uattr>
+                <uattr name="Pin/0002"></uattr>
+                <uattr name="Pin/0003"></uattr>
+                <uattr name="Pin/0004"></uattr>
+                <uattr name="Pin/0005"></uattr>
+                <uattr name="Pin/0006"></uattr>
+                <uattr name="Pin/0007"></uattr>
+                <uattr name="Pin/0008"></uattr>
+                <uattr name="Pin/0009"></uattr>
+                <uattr name="Pin/0010"></uattr>
+                <uattr name="Pin/0011"></uattr>
+                <uattr name="Pin/0012"></uattr>
+                <uattr name="Pin/0013"></uattr>
+                <uattr name="Pin/0014"></uattr>
+                <uattr name="Pin/0015"></uattr>
+                <uattr name="Pin/0016"></uattr>
+                <uattr name="Pin/0017"></uattr>
+                <uattr name="Pin/0018"></uattr>
+                <uattr name="Pin/0019"></uattr>
+                <uattr name="Pin/0020"></uattr>
+                <uattr name="Pin/0021"></uattr>
+                <uattr name="Pin/0022"></uattr>
+                <uattr name="Pin/0023"></uattr>
+                <uattr name="Pin/0024"></uattr>
+                <uattr name="Pin/0025"></uattr>
+                <uattr name="Pin/0026"></uattr>
+                <uattr name="Pin/0027"></uattr>
+                <uattr name="Pin/0028"></uattr>
+                <uattr name="Pin/0029"></uattr>
+                <uattr name="Pin/0030"></uattr>
+                <uattr name="Pin/0031"></uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="Math and Logic" enabled="1"/>
+        <resource_ref name="Multi-Buffered Output Data Exchange" enabled="0">
+            <rattr name="Buffer count">2</rattr>
+            <rattr name="Indicate overflow at buffer check">1</rattr>
+            <rattr name="Indicate overflow at buffer switch">0</rattr>
+            <rattr name="Prevent overflow at buffer switch">1</rattr>
+        </resource_ref>
+        <resource_ref name="Peripheral Sharing" enabled="0"/>
+        <resource_ref name="Pulse Counter" enabled="0"/>
+        <resource_ref name="RTC Multi-Event Capture" enabled="0"/>
+        <resource_ref name="RTC-Based Execution Scheduling" enabled="1"/>
+        <resource_ref name="Reference DAC" enabled="0"/>
+        <resource_ref name="Run-Time Logging" enabled="0"/>
+        <resource_ref name="SPI Chip Select" enabled="1">
+            <io_usage name="ADXL355" label="SPI Accelerometer">
+                <uattr name="CSN configuration when idle">0</uattr>
+                <uattr name="CSN pin/0000">DIO27</uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="SPI Data Transfer" enabled="1">
+            <rattr name="Bit rate">0</rattr>
+            <rattr name="MISO configuration when inactive">-1</rattr>
+            <rattr name="MOSI configuration on initialization">0</rattr>
+            <rattr name="MOSI configuration on uninitialization">0</rattr>
+            <rattr name="SCLK configuration on initialization">0</rattr>
+            <rattr name="SCLK configuration on uninitialization">0</rattr>
+            <io_usage>
+                <uattr name="MISO pin/0000">DIO24</uattr>
+                <uattr name="MOSI pin/0000">DIO25</uattr>
+                <uattr name="SCLK pin/0000">DIO26</uattr>
+            </io_usage>
+        </resource_ref>
+        <resource_ref name="Signal Observation" enabled="0"/>
+        <resource_ref name="System CPU Alert" enabled="1"/>
+        <resource_ref name="System Event Trigger" enabled="0"/>
+        <resource_ref name="TDC" enabled="0"/>
+        <resource_ref name="Timer 0" enabled="0"/>
+        <resource_ref name="Timer 0 Event Trigger" enabled="0"/>
+        <resource_ref name="Timer 1" enabled="0"/>
+        <resource_ref name="Timer 1 Event Trigger" enabled="0"/>
+        <resource_ref name="Timer 2" enabled="0"/>
+        <resource_ref name="Timer 2 Event Trigger" enabled="0"/>
+        <resource_ref name="UART Emulator" enabled="0">
+            <rattr name="RX buffer size">64</rattr>
+            <rattr name="Required idle period before enabling RX">11</rattr>
+            <rattr name="TX buffer size">64</rattr>
+            <io_usage>
+                <uattr name="RX pin/0000"></uattr>
+                <uattr name="TX pin/0000"></uattr>
+            </io_usage>
+        </resource_ref>
+        <sccode name="event0" init_power_mode="0"><![CDATA[]]></sccode>
+        <sccode name="event1" init_power_mode="0"><![CDATA[]]></sccode>
+        <sccode name="event2" init_power_mode="0"><![CDATA[]]></sccode>
+        <sccode name="event3" init_power_mode="0"><![CDATA[]]></sccode>
+        <sccode name="execute" init_power_mode="0"><![CDATA[macro i2cReadValue(result, addr, register) {
+    i2cStart();
+    i2cTx((addr << 1) | I2C_OP_WRITE);
+    i2cTx(register);
+    i2cRepeatedStart();
+    i2cTx((addr << 1) | I2C_OP_READ);
+    i2cRxNack(result);
+    i2cStop();
+}
+
+macro i2cReadHighValue(result, addr, register) {
+    i2cStart();
+    i2cTx((addr << 1) | I2C_OP_WRITE);
+    i2cTx(register);
+    i2cRepeatedStart();
+    i2cTx((addr << 1) | I2C_OP_READ);
+    i2cRxAck(result); //Dummy read to skip to high byte
+    i2cRxNack(result);
+    i2cStop();
+}
+
+macro i2cWriteValue(value, addr, register) {
+    i2cStart();
+    i2cTx((addr << 1) | I2C_OP_WRITE);
+    i2cTx(register);
+    i2cTx(value);
+    i2cStop();
+}
+
+macro spiWriteReg(addr, value) {
+    spiBegin(AUXIO_SPI_CSN_ADXL355);
+    //spiTx8bit(ACCEL_SPI_WRITE);
+    spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+    spiTx8bit(value);
+    spiEnd(AUXIO_SPI_CSN_ADXL355);
+}
+
+U16 acc = 0;
+U16 sensorConfigStartBits = 0;
+U16 sensorConfigStopBits = 0;
+
+
+/////////////////////////////////////////////////////////////////
+// Read data from enabled sensors and write to output struct
+/////////////////////////////////////////////////////////////////
+
+
+//Magnetometer MMC34160PJ
+//=======================================
+
+if (cfg.sensorConfigOld & CONFIG_ENABLE_MAGNETOMETER_BV) {
+    U16 rdy = 0;
+
+    i2cReadValue(rdy, MMC34160PJ_I2C_ADDR, 0x06);
+
+    U16 mag = 0;
+
+    if (rdy & 0x01) {
+
+        for (U16 n = 0; n < MMC34160PJ_AXIS_COUNT; n++) {
+
+            i2cStart();
+            i2cTx((MMC34160PJ_I2C_ADDR << 1) | I2C_OP_WRITE);
+            i2cTx(n << 1); //n*2 (offset)
+            i2cRepeatedStart();
+            i2cTx((MMC34160PJ_I2C_ADDR << 1) | I2C_OP_READ);
+            i2cRxAck(mag);
+            output.mmc34160pjaxis[n] = 0x00FF & mag;
+            i2cRxNack(mag);
+            output.mmc34160pjaxis[n] = (mag << 8) | output.mmc34160pjaxis[n];
+            i2cStop();
+
+        }
+
+        //Start new measurement
+        i2cWriteValue(0x01, MMC34160PJ_I2C_ADDR, 0x07);
+    }
+}
+
+
+
+
+//ADXL355 SPI
+//=======================================
+
+if (cfg.sensorConfigOld & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+    U16 n = 0;
+
+
+    spiBegin(AUXIO_SPI_CSN_ADXL355);
+    spiTx8bit((0x08 << 1) | ADXL355_SPI_READ); //XDATA3 starts at 0x08 << 1 für RW-bit
+
+    while (n < ADXL355_AXIS_WORDS) {
+
+        spiRx8bit(acc);
+        output.adxl355axis[n] = (acc << 8); //upper byte
+        spiRx8bit(acc);
+        output.adxl355axis[n] = (output.adxl355axis[n] | acc); //lower byte
+
+        n += 1; //n += 1; //next word in output array, n = n + 1
+
+        spiRx8bit(acc);
+        output.adxl355axis[n] = (acc << 8); //Only upper nibble
+
+        n += 1; //next axis
+    }
+
+    spiEnd(AUXIO_SPI_CSN_ADXL355);
+}
+
+
+
+//6-DOF Sensor BMI160
+//=======================================
+
+if (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_GYRO_BV) {
+    for (U16 n = 0; n < BMI160_GYRO_AXIS_COUNT; n++) {
+
+        i2cStart();
+        i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_WRITE);
+        i2cTx(0x0C + (n << 1)); //Start 0x0C + n*2 (offset)
+        i2cRepeatedStart();
+        i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_READ);
+        i2cRxAck(acc);
+        output.bmi160gyroaxis[n] = 0x00FF & acc;
+        i2cRxNack(acc);
+        output.bmi160gyroaxis[n] = (acc << 8) | output.bmi160gyroaxis[n];
+        i2cStop();
+
+    }
+}
+
+
+if (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+    for (U16 n = 0; n < BMI160_ACCEL_AXIS_COUNT; n++) {
+        i2cStart();
+        i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_WRITE);
+        i2cTx(0x12 + (n << 1)); //Start 0x22 + n*2 (offset)
+        i2cRepeatedStart();
+        i2cTx((BMI160_I2C_ADDR << 1) | I2C_OP_READ);
+        i2cRxAck(acc);
+        output.bmi160accelaxis[n] = 0x00FF & acc;
+        i2cRxNack(acc);
+        output.bmi160accelaxis[n] = (acc << 8) | output.bmi160accelaxis[n];
+        i2cStop();
+    }
+}
+
+
+//Barometer and Temperature
+//=======================================
+if (cfg.sensorConfigOld & CONFIG_ENABLE_BAROMETER_BV) {
+    if (state.i2cStatus == 0x0000) {
+
+        //i2cDeviceWriteReg16MsbFirst((BAROM_I2C_ADDR << 1), BAROM_REG_PWR_CTRL, (BAROM_CTRL_MODE_FORCED | BAROM_CTRL_PRES_TEMP_EN));
+        // Select the result register
+        U16 temp;
+        U16 pres = 0;
+        U16 status = 0;
+        output.temp = 0;
+
+        //i2cDeviceReadReg8((BAROM_I2C_ADDR << 1), BAROM_REG_STATUS; status);
+        i2cDeviceReadReg8((BAROM_I2C_ADDR << 1), 0x0003; status);
+        state.status = status;
+
+
+
+
+        //i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), BAROM_REG_PWR_CTRL, (BAROM_CTRL_MODE_FORCED | BAROM_CTRL_PRES_TEMP_EN));
+        i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), 0x001B, (0x0010 | 0x0003));
+
+        i2cStart();
+        i2cTx((BAROM_I2C_ADDR << 1) | I2C_OP_WRITE);
+        i2cTx(0x08);
+        i2cRepeatedStart();
+        i2cTx((BAROM_I2C_ADDR << 1) | I2C_OP_READ);
+        i2cRxAck(temp);
+        output.temp = 0x00FF & temp;
+        i2cRxNack(temp);
+        output.temp = (temp << 8) | output.temp;
+        i2cStop();
+
+        //i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), BAROM_REG_TEMP_DATA_LSB; temp);
+        //i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), 0x0008; temp);
+        //i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), BAROM_REG_PRES_DATA_LSB; pres);
+        i2cDeviceReadReg16LsbFirst((BAROM_I2C_ADDR << 1), 0x0005; pres);
+
+
+
+        // If successful ...
+        if (state.i2cStatus == 0x0000) {
+
+            output.temp = temp; //offset for better graph
+            output.pressure = pres;
+            state.status = status;
+            i2cStop();
+        }
+    }
+}
+
+//Fuel Gauge MAX17055
+//=======================================
+
+if (cfg.sensorConfigOld & CONFIG_ENABLE_BATTERY_BV) {
+    state.batterySamplingWaitCount = state.batterySamplingWaitCount + 1;
+    if (state.batterySamplingWaitCount >= cfg.batterySamplingInterval) {
+        state.batterySamplingWaitCount = 0;
+        i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x05; output.batteryCapacity); //Read RepCap
+        i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x10; output.batteryCapacityFull); //Read FullCapRep
+        i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x19; output.batteryVoltage); //Read AvgVCell
+        i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x0A; output.batteryCurrent); //Read Current
+        i2cDeviceReadReg16LsbFirst(MAX17055_I2C_ADDR << 1, 0x0B; output.batteryCurrentAverage); //Read AvgCurrent
+        i2cReadHighValue(output.batteryStateOfCharge, MAX17055_I2C_ADDR, 0x06); //Read RepCap
+    }
+}
+
+
+//exposed pad analog reading
+//=======================================
+
+if (cfg.sensorConfigOld & CONFIG_ENABLE_ANALOG_BV) {
+    // Sample the sensor
+    adcGenManualTrigger();
+    adcReadFifo(output.adcValue);
+}
+
+// Determine if the ADC value is below the low threshold or above the high threshold
+//U16 bvWindowState = 0x0000;
+//if (adcValue < cfg.adcWindowLow) {
+//   bvWindowState |= BV_ADC_WINDOW_LOW;
+//}
+//if (adcValue > cfg.adcWindowHigh) {
+//    bvWindowState |= BV_ADC_WINDOW_HIGH;
+//}
+
+
+
+//Reset Sensors
+//=======================================
+if (cfg.resetSensors != 0){
+    cfg.resetSensors = 0;
+
+    //reset BMI160
+    if (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_GYRO_BV) {
+
+        //Compensate offset
+        i2cWriteValue(0x03, BMI160_I2C_ADDR, 0x7E);
+        //Wait for offset compensation
+        for (U16 n = 0; n < 5; n++) {
+            fwDelayUs(50000);
+        }
+        //Enable offset for gyroscope
+        i2cWriteValue(0x80, BMI160_I2C_ADDR, 0x77);
+    }
+
+    //reset ADXL
+    if (cfg.sensorConfigOld & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+
+        spiBegin(AUXIO_SPI_CSN_ADXL355);
+        // Perform soft reset, then wait 100 ms
+        //spiWriteReg(ADXL355_REG_SOFT_RESET, ADXL355_SR_KEY)
+        spiWriteReg(0x2F, 0x52);
+        fwDelayUs(50000);
+        fwDelayUs(50000);
+
+        // Perform one-time configuration of the ADXL355 accelerometer
+        //reset low noise and measure on, begin measuring mode
+        //spiWriteReg(ADXL355_REG_POWER_CTL, ACCEL_PC_MEASURE_ON);
+        spiWriteReg(0x2D, 0x00);
+        spiEnd(AUXIO_SPI_CSN_ADXL355);
+        //Set Accel Range to +-4g more like 2 g ?
+        //spiWriteReg(0x2C, 0x02);
+    }
+
+    //reset Magnetometer
+
+    //reset Barometer
+}
+
+
+// Alert main CPU that data is available
+fwGenAlertInterrupt();
+
+
+/////////////////////////////////////////////////////////////////
+// Enable and disable sensor ICs based on sensorConfig
+/////////////////////////////////////////////////////////////////
+
+sensorConfigStartBits = cfg.sensorConfig & (~cfg.sensorConfigOld);
+sensorConfigStopBits = cfg.sensorConfigOld & (~cfg.sensorConfig);
+
+//ADXL355 SPI init
+//=======================================
+
+
+// Start or stop Accel
+if (sensorConfigStartBits & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+    // Perform soft reset, then wait 100 ms
+    //spiWriteReg(ADXL355_REG_SOFT_RESET, ADXL355_SR_KEY)
+    spiWriteReg(0x2F, 0x52);
+    fwDelayUs(50000);
+    fwDelayUs(50000);
+
+    // Perform one-time configuration of the ADXL355 accelerometer
+    //reset low noise and measure on, begin measuring mode
+    //spiWriteReg(ADXL355_REG_POWER_CTL, ACCEL_PC_MEASURE_ON);
+    spiWriteReg(0x2D, 0x00);
+
+    //Set Accel Range to +-4g more like 2 g ?
+    //spiWriteReg(0x2C, 0x02);
+} else if (sensorConfigStopBits & CONFIG_ENABLE_ADXL355_ACCEL_BV) {
+     // TODO
+}
+
+//Magnetometer MMC34160PJ init
+//=======================================
+
+if (sensorConfigStartBits & CONFIG_ENABLE_MAGNETOMETER_BV) {
+    //Magnetometer enable 2.16ms measure interval -> only 14bit resolution
+    i2cWriteValue(0x02, MMC34160PJ_I2C_ADDR, 0x08);
+
+    //Magnetometer enable 4.08ms measure interval
+    //i2cWriteValue(0x01, MMC34160PJ_I2C_ADDR, 0x08);
+
+    //REFILL CAP
+    i2cWriteValue(0x80, MMC34160PJ_I2C_ADDR, 0x07);
+    fwDelayUs(50000);
+    //SET
+    i2cWriteValue(0x20, MMC34160PJ_I2C_ADDR, 0x07);
+    //REFILL CAP
+    i2cWriteValue(0x80, MMC34160PJ_I2C_ADDR, 0x07);
+    fwDelayUs(50000);
+    //RESET
+    i2cWriteValue(0x0, MMC34160PJ_I2C_ADDR, 0x07);
+
+    //Start new measurement
+    i2cWriteValue(0x01, MMC34160PJ_I2C_ADDR, 0x07);
+} else if (sensorConfigStopBits & CONFIG_ENABLE_MAGNETOMETER_BV) {
+    // TODO
+}
+
+
+//exposed pad analog reading
+//=======================================
+// Enable the ADC
+if (sensorConfigStartBits & CONFIG_ENABLE_ANALOG_BV) {
+    adcEnableSync(ADC_REF_FIXED, ADC_SAMPLE_TIME_2P7_US, ADC_TRIGGER_MANUAL);
+} else if (sensorConfigStopBits & CONFIG_ENABLE_ANALOG_BV) {
+    adcDisable();
+}
+
+
+//6-DOF Sensor BMI160
+//=======================================
+
+// Start Accel
+if (sensorConfigStartBits & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+    //Set ODR to 1600
+    i2cWriteValue(0x42, BMI160_I2C_ADDR, 0x2C);
+
+
+    //Start Accelerometer
+    i2cWriteValue(0x11, BMI160_I2C_ADDR, 0x7E);
+
+    //Set Accel Range to +-4g
+    //i2cWriteValue(0x41, BMI160_I2C_ADDR, 0x05);
+
+    //Wait for the BMI160 to wake
+    fwDelayUs(3000);
+} else if (sensorConfigStopBits & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+    // TODO
+    // Shut down whole BMI160 IC if Gyro was already disabled before
+    ifnot (cfg.sensorConfigOld & CONFIG_ENABLE_BMI160_GYRO_BV) {
+        // TODO
+    }
+}
+
+
+//Start Gyro
+if (sensorConfigStartBits & CONFIG_ENABLE_BMI160_GYRO_BV) {
+    i2cWriteValue(0x15, BMI160_I2C_ADDR, 0x7E);
+
+    //Wait for the BMI160 to wake
+    fwDelayUs(55000);
+
+    //Enable fast offset compensation for the Gyrsoscope
+    i2cWriteValue(0x40, BMI160_I2C_ADDR, 0x69);
+
+    //Compensate offset
+    i2cWriteValue(0x03, BMI160_I2C_ADDR, 0x7E);
+
+    //Wait for offset compensation
+    for (U16 n = 0; n < 5; n++) {
+        fwDelayUs(50000);
+    }
+
+    //Enable offset for gyroscope
+    i2cWriteValue(0x80, BMI160_I2C_ADDR, 0x77);
+} else if (sensorConfigStopBits & CONFIG_ENABLE_BMI160_GYRO_BV) {
+    // Shut down whole BMI160 IC if Accel was already off or was disabled this cycle
+    ifnot (cfg.sensorConfig & CONFIG_ENABLE_BMI160_ACCEL_BV) {
+        // TODO
+    }
+}
+
+//Barometer and Temperature
+//=======================================
+if (sensorConfigStartBits & CONFIG_ENABLE_BAROMETER_BV) {
+    //i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), BAROM_REG_PWR_CTRL, (BAROM_CTRL_MODE_NORMAL | BAROM_CTRL_PRES_TEMP_EN));
+    i2cDeviceWriteReg8((BAROM_I2C_ADDR << 1), 0x001B, (0x0030 | 0x0003));
+} else if (sensorConfigStopBits & CONFIG_ENABLE_BAROMETER_BV) {
+    // Stop Barometer and temperature
+}
+
+
+// Shift sensorConfig value for state transition detection in the next execution
+cfg.sensorConfigOld = cfg.sensorConfig;
+
+
+// Schedule the next execution
+fwScheduleTask(1);]]></sccode>
+        <sccode name="initialize" init_power_mode="0"><![CDATA[macro i2cWriteValue(value, addr, register) {
+    i2cStart();
+    i2cTx((addr << 1) | I2C_OP_WRITE);
+    i2cTx(register);
+    i2cTx(value);
+    i2cStop();
+}
+
+macro i2cWriteWord(value, addr, register) {
+    i2cStart();
+    i2cTx((addr << 1) | I2C_OP_WRITE);
+    i2cTx(register);
+    i2cTx(value);
+    i2cTx((value) >> 8);
+    i2cStop();
+}
+
+macro spiWriteReg(addr, value) {
+    spiBegin(AUXIO_SPI_CSN_ADXL355);
+    //spiTx8bit(ACCEL_SPI_WRITE);
+    spiTx8bit((addr << 1) | ADXL355_SPI_WRITE);
+    spiTx8bit(value);
+    spiEnd(AUXIO_SPI_CSN_ADXL355);
+}
+
+macro i2cReadWord(result, addr, register) {
+    i2cDeviceReadReg16LsbFirst(addr << 1, register; result);
+}
+
+
+//ADXL355 SPI init
+//=======================================
+
+// Configure the SPI peripheral
+spiCfg(SPI_POL0_PHA0, 1);
+
+
+//6-DOF Sensor BMI160
+//=======================================
+
+
+//Barometer and Temperature
+//=======================================
+
+//Fuel Gauge MAX17055
+//=======================================
+// no global init
+
+U16 value;
+i2cReadWord(value, MAX17055_I2C_ADDR, 0x00); // Read Status register
+if (value & 0x0002) { // Check if power on reset bit StatusPOR is set
+
+    // After power-up, wait for the MAX17055 to complete its startup operations.
+    do {
+        i2cReadWord(value, MAX17055_I2C_ADDR, 0x3D); // read FSTAT
+        fwDelayUs(10000);
+    } while (value & 0x01); //do not continue until FSTAT.DNR == 0
+
+
+    // Exit hibernation mode
+    U16 HibCFG;
+    i2cReadWord(HibCFG, MAX17055_I2C_ADDR, 0xBA); //Store original HibCFG value
+    i2cWriteWord(0x90, MAX17055_I2C_ADDR, 0x60); // Exit Hibernate Mode step 1
+    i2cWriteWord(0x00, MAX17055_I2C_ADDR, 0xBA); // Exit Hibernate Mode step 2
+    i2cWriteWord(0x00, MAX17055_I2C_ADDR, 0x60); // Exit Hibernate Mode step 3
+
+    // Initialize battery model
+    i2cWriteWord(BATTERY_DESIGNED_CAP, MAX17055_I2C_ADDR, 0x18); // Write DesignCap
+    i2cWriteWord(BATTERY_DESIGNED_CAP_DIV_BY_32, MAX17055_I2C_ADDR, 0x45); //Write dQAcc
+    i2cWriteWord(BATTERY_CHARGE_TERMINATION_REG_VALUE, MAX17055_I2C_ADDR, 0x1E); // Write IchgTerm
+    i2cWriteWord(BATTERY_EMPTY_VOLTAGE_AND_BATTERY_RECOVERY_VOLTAGE_REGISTER_VALUE, MAX17055_I2C_ADDR, 0x3A); //VEmpty
+
+    //Only use integer portion of dQAcc=int(DesignCap/32) in the calculation of dPAcc to avoid quantization of FullCapNom
+    i2cWriteWord(BATTERY_DESIGNED_CAP_DIV_BY_32*(44138/BATTERY_DESIGNED_CAP), MAX17055_I2C_ADDR, 0x46); //Write dPAcc
+    i2cWriteWord(0x8000, MAX17055_I2C_ADDR, 0xDB) ; // Write ModelCFG
+
+    //Poll ModelCFG.Refresh(highest bit), proceed to Step 4 when ModelCFG.Refresh = 0.
+    do {
+        i2cReadWord(value, MAX17055_I2C_ADDR, 0xDB); // read FSTAT
+        fwDelayUs(10000);
+    } while (value & 0x8000); // Do not continue until ModelCFG.Refresh == 0.
+
+    i2cWriteWord(HibCFG, MAX17055_I2C_ADDR, 0xBA) ; // Restore Original HibCFG value
+
+    i2cReadWord(value, MAX17055_I2C_ADDR, 0x00); // Read Status
+    i2cWriteWord(value & 0xFFFD, MAX17055_I2C_ADDR, 0x00);
+} else { //then do Steps 2–3.}
+}
+//exposed pad analog reading
+//=======================================
+// Select ADC input
+adcSelectGpioInput(AUXIO_A_ADC_READ);
+
+
+// Schedule the first execution
+fwScheduleTask(1);]]></sccode>
+        <sccode name="terminate" init_power_mode="0"><![CDATA[]]></sccode>
+        <event_trigger active_count="1">0,1,2,3</event_trigger>
+        <tt_iter>wait_10ms,run_execute</tt_iter>
+        <tt_struct>output.batteryCapacity,output.batteryCapacityFull,output.batteryCurrent,output.batteryCurrentAverage,output.batteryStateOfCharge</tt_struct>
+        <rtl_struct>state.i2cStatus</rtl_struct>
+        <rtl_task_sel en="1" struct_log_list="state"/>
+    </task>
+</project>

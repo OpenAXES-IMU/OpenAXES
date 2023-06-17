@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# This file is part of the OpenAXES project, a wireless IMU.
+# Copyright 2023 Nils Stanislawski and Fritz Webering
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+set -o errexit -o nounset # Safety features
+
+# Report the error, and ensure that the build fails when something goes wrong
+trace_file=".build_version.h.trace"
+report_error() {
+    rm -f build_version.h
+    cat "$trace_file"
+    echo "ERROR: Failed to create build_version.h"
+    exit 1
+}
+trap '{ set +x; } 2>/dev/null; report_error' EXIT
+exec 2>"$trace_file" # Redirect all error output (including bash trace) to a separate file
+set -x  # Trace execution to allow debugging in case something goes wrong
+
+rm -f build_version.h
+
+#################################################################################################
+# Create a stable version string describing the current state of the firmware source code in git.
+# This includes the latest version tag, the number of additional commits since the tag, the
+# latest commit hash, and the dirty state. The version string format is as follows:
+#
+# ${major}.${minor}.${patch}[+${count}-${short_hash}][*]
+#
+# * The first triplet is the version number derived from the newest tag of the form
+#   "firmware-${major}.${minor}.${patch}"
+# * The string +${count}-${short_hash} only occurs if there are commits since the last tag
+# * ${count} is the number of commits in the firmware directory since the last tag
+# * ${short_hash} is the 6-digit hash of the last commit in the firmware directory
+# * The optional asterisk at the end signifies uncommitted changes since the last commit
+#
+# We can't use git describe` because it will not only show the latest tag that
+# modified THIS directory, but the latest tag in the repo overall.
+# Also, `git log --tags='pattern'` does not work because it includes tags that are not in the history of HEAD.
+# Thus we use `git log HEAD` and grep for tags starting with the given prefix.
+# Then we count the commits since then that modified THIS directory using `git log . | wc -l`.
+firmware_source_directory='..' # Relative to the build directory. Necessary for `git log -- path` to correctly determine changes
+firmware_tag_prefix='firmware-'
+tagged_commit="$( git log --format='%H|%D' HEAD | grep -m1 "tag: $firmware_tag_prefix[^ ,)]*" )"
+tagged_commit_hash="${tagged_commit%%|*}"
+firmware_tag="$( echo $tagged_commit | grep -o "tag: $firmware_tag_prefix[^ ,)]*" )"
+firmware_tag="${firmware_tag#tag: }"
+version_string="${firmware_tag/$firmware_tag_prefix/}"
+commits_after_tag="$( git log --format="%H %D" "$tagged_commit_hash..HEAD" -- "$firmware_source_directory" | wc -l )"
+if (( commits_after_tag > 0 )); then
+    last_commit_hash="$(git log -n1 --format="%H" -- "$firmware_source_directory")"
+    version_string="$version_string+$commits_after_tag-${last_commit_hash:0:6}"
+fi
+if ! git diff --quiet HEAD -- "$firmware_source_directory"; then # Contains uncommitted changes
+    version_string="$version_string*"
+fi
+echo "#define BUILD_VERSION_STRING \"$version_string\"" >> build_version.h
+
+# Add info when this build was compiled
+echo "#define BUILD_DATE_TIME_UINT32 `date +%y%m%d%H%M`L" >> build_version.h
+echo "#define BUILD_DATE \"`date +%Y%m%d`\"" >> build_version.h
+echo "#define BUILD_TIME \"`date +%H%M%S`\"" >> build_version.h
+echo "#define BUILD_DATE_TIME \"`date +%Y%m%d-%H%M%S`\"" >> build_version.h
+
+# All work successfully completed. Disable the error reporting trap and remove the trace file.
+trap '' EXIT
+rm -f "$trace_file"

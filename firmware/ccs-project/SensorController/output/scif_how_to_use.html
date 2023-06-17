@@ -1,0 +1,621 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>SCIF Driver - How to Use</title>
+    <style>
+        body {
+            background: #FFFFFF;
+            color: #000000;
+            font-family: calibri,sans serif;
+            font-size: 12pt;
+            margin-left: 0.2em;
+            margin-right: 0.2em;
+        }
+        h1 {
+            color: #000000;
+            font-weight: bold;
+            font-size: 28pt;
+            text-align: center;
+        }
+        h2 {
+            color: #000080;
+            font-weight: bold;
+            font-size: 24pt;
+            text-align: center;
+        }
+        div.h3 {
+            color: #400080;
+            font-weight: bold;
+            font-size: 18pt;
+            margin-top: 0.8em;
+        }
+        div.h4 {
+            color: #800000;
+            font-weight: bold;
+            font-size: 14pt;
+            margin-top: 0.4em;
+        }
+        div.h5 {
+            color: #000000;
+            font-weight: bold;
+            font-size: 12pt;
+            margin-top: 0.4em;
+        }
+        div.h5r {
+            color: #0000E0;
+            font-weight: bold;
+            font-size: 12pt;
+            margin-top: 0.4em;
+        }
+        table {
+            text-align: left;
+            background: #A0A0A0;
+        }
+        th {
+            text-align: left;
+            background: #C0C0C0;
+        }
+        td {
+            background: #E0E0E0;
+            overflow: hidden;
+        }
+        th, td {
+            padding-left: 0.25em;
+            padding-right: 0.25em;
+            padding-top: 0.1em;
+            padding-bottom: 0.1em;
+            vertical-align: middle;
+        }
+        tt, pre {
+            color: #0000E0;
+            font-family: consolas;
+            font-size: 10pt;
+        }
+        pre {
+            background: #E0E0E0;
+            padding-left: 0.25em;
+            padding-right: 0.25em;
+            padding-top: 0.25em;
+            padding-bottom: 0.25em;
+        }
+        a:link {
+            color: #0000FF;
+        }
+    </style>
+</head>
+
+
+<body>
+<h1>Sensor Controller Studio</h1>
+<h2>SCIF Driver - How to Use</h2>
+
+
+
+
+<div class="h3">Introduction</div>
+<p>
+This guide describes how to use the Sensor Controller Interface driver (SCIF) generated from the following Sensor Controller project:
+<ul>
+    <li>Project name: <b>IMS IMUv6 Sensor Reader</b></li>
+    <li>Project file: <tt>Z:/repository/OpenAXES/workspace/OpenAXES/SensorController/IMUv6_all_sensors.scp</tt></li><!-- no_compare -->
+    <li>Operating system: <b>TI-RTOS</b></li>
+    <li>Target chip: <b>CC2652R1F</b>, package <b>QFN48 7x7 RGZ</b>, revision <b>E (2.1) or F (3.0)</b></li>
+</ul>
+</p><p>
+The guide is tailored for this project, and contains code snippets that you can copy and paste directly into your application.
+</p><p>
+
+</p>
+
+<div class="h4">Preparation</div>
+<p>
+Sensor Controller task code cannot be debugged from the application IDE (IAR EWARM or CCS).
+</p><p>
+Use Task Testing, Task Debugging and/or Run-Time Logging in Sensor Controller Studio to make sure that your Sensor Controller task(s) work as expected, before you start integrating the SCIF driver into the application.
+</p>
+
+<div class="h4">Getting Started</div>
+<p>
+Follow these steps to start integrating the SCIF driver into your application:
+<ul>
+    <li><a href="#add_driver_to_app">Add the generated SCIF driver to the application project</a></li>
+    <li><a href="#include_scif_h">Include the SCIF driver header file</a></li>
+    <li><a href="#add_callbacks">Add callback functions</a></li>
+    <li><a href="#init_driver">Initialize the SCIF driver</a></li>
+    <li><a href="#start_task_simplified">Start Sensor Controller tasks (simplified)</a></li>
+    <li><a href="#data_exchange">Access Sensor Controller data structures from the application</a></li>
+    <li><a href="#alert_interrupt">Handle Sensor Controller ALERT interrupts</a></li>
+</ul>
+</p>
+
+<div class="h4">Further Integration</div>
+<p>
+These sections cover additional SCIF driver features and other information that can be helpful when integrating the SCIF driver:
+<ul>
+    <li><a href="#task_control">Task control</a></li>
+    <ul>
+        <li><a href="#task_control_wait">Wait for the previous task control operation to finish</a></li>
+        <li><a href="#start_task">Start or restart Sensor Controller tasks</a></li>
+        <li><a href="#stop_task">Stop Sensor Controller tasks</a></li>
+        <li><a href="#run_task_once">Run Sensor Controller tasks once</a></li>
+        <li><a href="#trigger_exec_code">Trigger the execution code block manually</a></li>
+    </ul>
+    <li><a href="#share_io_pins">Share I/O pins between the Sensor Controller and the application</a></li>
+    <li><a href="#constants">Use project specific definitions in the application</a></li>
+    <li><a href="#uninit_driver">Uninitialize the SCIF driver</a></li>
+    <li><a href="#code_gen_app_prebuild">Run the Sensor Controller Studio code generator in the application pre-build step</a></li>
+    <li><a href="#run_doxygen">Generate Doxygen documentation for the SCIF driver</a></li>
+</ul>
+</p>
+
+
+
+
+<div class="h3">Getting Started</div>
+<p>
+This section describes how to add and start integrating the SCIF driver into an existing System CPU application.
+</p><p>
+It is assumed that all the code snippets below go into one C source file, in the same directory as the SCIF driver. Otherwise you may have to change <tt>#include</tt> paths, and add function prototypes.
+</p><p>
+If you do not have an existing application, please take a look at some of the examples in Sensor Controller Studio.
+</p>
+
+
+<div class="h4"><a name="add_driver_to_app">Add the Generated SCIF Driver to the Application Project</a></div>
+<p>
+You must add these files to your application project:
+<ul>
+    <li><tt>scif.c</tt></li>
+    <li><tt>scif_framework.c</tt></li>
+</ul>
+</p><p>
+You can optionally add these files to the application project:
+<ul>
+    <li><tt>scif.h</tt></li>
+    <li><tt>scif_framework.h</tt></li>
+    <li><tt>scif_osal_tirtos.c</tt> (this source file is mostly for internal use, and is included by <tt>scif_framework.c</tt>)</li>
+    <li><tt>scif_osal_tirtos.h</tt></li>
+</ul>
+</p>
+
+<div class="h5">IAR EWARM</div>
+<p>
+<ul>
+    <li>Right-click in the project tree</li>
+    <li>Click <i>Add</i> -> <i>Add Files ...</i></li>
+    <li>Select the files to be added</li>
+</ul>
+</p>
+
+<div class="h5">CCS</div>
+<p>
+<ul>
+    <li>Right-click on the project in the project tree</li>
+    <li>Click <i>Add Files ...</i></li>
+    <li>Select the files to be added</li>
+    <li>Select the <i>Link to files</i> option (this allows Sensor Controller Studio to update the SCIF driver files)</li>
+</ul>
+</p>
+
+
+<div class="h4"><a name="include_scif_h">Include the SCIF Driver Header File</a></div>
+<p>
+Add the following code to include the SCIF driver main header file:
+<pre>
+#include "scif.h"
+</pre>
+
+
+<div class="h4"><a name="add_callbacks">Add SCIF Driver Callback Functions</a></div>
+<p>
+Add these SCIF driver callback functions to the application:
+<pre>
+// SCIF driver callback: Task control interface ready (non-blocking task control operation completed)
+void scCtrlReadyCallback(void) {
+
+}
+</pre>
+</p><p>
+<pre>
+// SCIF driver callback: Sensor Controller task code has generated an alert interrupt
+void scTaskAlertCallback(void) {
+
+}
+</pre>
+</p>
+
+
+<div class="h4"><a name="init_driver">Initialize the SCIF Driver</a></div>
+<p>
+Add the following code to initialize the SCIF driver. You can do this:
+<ul>
+    <li>In your application's <tt>main()</tt> function, immediately before the operating system (RTOS) task scheduler is started</li>
+    <li>At the start of an RTOS task, which has a main loop that handles the Sensor Controller:</li>
+</ul>
+<pre>
+// Initialize the SCIF operating system abstraction layer
+scifOsalInit();
+scifOsalRegisterCtrlReadyCallback(scCtrlReadyCallback);
+scifOsalRegisterTaskAlertCallback(scTaskAlertCallback);
+
+// Initialize the SCIF driver
+scifInit(&scifDriverSetup);
+
+// Enable RTC ticks, with N Hz tick interval
+scifStartRtcTicksNow(0x00010000 / N);
+</pre>
+</p>
+
+<div class="h5">I/O Pin Configuration</div>
+<p>
+The <tt>scifInit()</tt> call initializes all I/O pins used by the Sensor Controller. Do not configure these I/O pins in the application.
+</p>
+
+
+<div class="h4"><a name="start_task_simplified">Start Sensor Controller Tasks (Simplified)</a></div>
+<p>
+The SCIF driver uses the task control interface to start and stop Sensor Controller tasks, and perform other task control operations. The <a href="#task_control">Task Control</a> section describes how to use the task control functions correctly, but for now we will only perform one operation that
+starts the Sensor Controller task.
+</p><p>
+To start the "IMUv6 Sensor Task" task:
+<pre>// Start the "IMUv6 Sensor Task" Sensor Controller task
+scifStartTasksNbl(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID);</pre>
+</p>
+
+
+<div class="h4"><a name="data_exchange">Access Sensor Controller Data Structures from the Application</a></div>
+<p>
+The application can directly access the Sensor Controller's <tt>cfg</tt>, <tt>input</tt>, <tt>output</tt> and <tt>state</tt> data structures, which are located in the AUX RAM. This is the one and only mechanism for exchanging data between the Sensor Controller and the application.
+</p><p>
+Resource-specified data structure members should not be accessed directly, but rather through the resource provided API.
+</p>
+
+<div class="h5">IMUv6 Sensor Task</div>
+<p>
+The application will typically write to the <tt>cfg</tt> data structure before the task is started:
+<pre>
+scifTaskData.imuv6SensorTask.cfg.batterySamplingInterval = ...;
+scifTaskData.imuv6SensorTask.cfg.resetSensors = ...;
+scifTaskData.imuv6SensorTask.cfg.sensorConfig = ...;
+scifTaskData.imuv6SensorTask.cfg.sensorConfigOld = ...;
+</pre>
+</p>
+
+
+<p>
+The application will typically read from the <tt>output</tt> data structure while the task is running:
+<pre>
+... = scifTaskData.imuv6SensorTask.output.adcValue;
+for (int n = 0; n < SCIF_IMUV6_SENSOR_TASK_ADXL355_AXIS_WORDS; n++) {
+    ... = scifTaskData.imuv6SensorTask.output.adxl355axis[n];
+}
+... = scifTaskData.imuv6SensorTask.output.batteryCapacity;
+... = scifTaskData.imuv6SensorTask.output.batteryCapacityFull;
+... = scifTaskData.imuv6SensorTask.output.batteryCurrent;
+... = scifTaskData.imuv6SensorTask.output.batteryCurrentAverage;
+... = scifTaskData.imuv6SensorTask.output.batteryStateOfCharge;
+... = scifTaskData.imuv6SensorTask.output.batteryVoltage;
+for (int n = 0; n < SCIF_IMUV6_SENSOR_TASK_BMI160_ACCEL_AXIS_COUNT; n++) {
+    ... = scifTaskData.imuv6SensorTask.output.bmi160accelaxis[n];
+}
+for (int n = 0; n < SCIF_IMUV6_SENSOR_TASK_BMI160_GYRO_AXIS_COUNT; n++) {
+    ... = scifTaskData.imuv6SensorTask.output.bmi160gyroaxis[n];
+}
+for (int n = 0; n < SCIF_IMUV6_SENSOR_TASK_MMC34160PJ_AXIS_COUNT; n++) {
+    ... = scifTaskData.imuv6SensorTask.output.mmc34160pjaxis[n];
+}
+... = scifTaskData.imuv6SensorTask.output.pressure;
+... = scifTaskData.imuv6SensorTask.output.temp;
+</pre>
+</p>
+
+<p>
+The <tt>state</tt> data structure is normally for internal use by the Sensor Controller, but can also be used for data exchange during operation or for observation:
+<pre>
+... = scifTaskData.imuv6SensorTask.state.batterySamplingWaitCount;
+... = scifTaskData.imuv6SensorTask.state.status;
+
+scifTaskData.imuv6SensorTask.state.batterySamplingWaitCount = ...;
+scifTaskData.imuv6SensorTask.state.status = ...;
+</pre>
+</p>
+</p>
+
+
+<div class="h4"><a name="alert_interrupt">Handle Sensor Controller ALERT interrupts</a></div>
+<p>
+You can handle Sensor Controller ALERT events at any desired priority level, for example:
+<ul>
+    <li>In interrupt context, that is, in <tt>scTaskAlertCallback()</tt></li>
+    <li>In RTOS task context, using <tt>scTaskAlertCallback()</tt> to unblock the task by posting a semaphore or similar</li>
+</ul>
+<pre>// Clear the ALERT interrupt source
+scifClearAlertIntSource();
+
+... Access Sensor Controller task data structures here ...
+
+// Acknowledge the ALERT event
+scifAckAlertEvents();</pre>
+</p>
+
+
+
+
+<div class="h3">Further Integration</div>
+<p>
+This section describes task control in more detail, additional SCIF driver features, and other useful information.
+</p>
+
+<div class="h4"><a name="task_control">Task Control</a></div>
+<p>
+Task control operations are used to start and stop Sensor Controller tasks, and to trigger manual execution of task code blocks.
+</p><p>
+The task control interface can perform one operation at a time, and it is busy until the Sensor Controller has completed the operation. The task control functions are, however, non-blocking (hence the <tt>Nbl</tt> suffix), and return immediately. This means that you must wait for each task control operation to finish before performing another operation.
+</p><p>
+You can wait either before or after each task control operation. Normally it makes sense to wait before each operation since this reduces the waiting time. If your application performs task control from multiple threads of execution, you must ensure that this is done atomically:
+<ol>
+    <li>Enter critical section</li>
+    <li>Wait for the previous task control operation to finish</li>
+    <li>Perform task control operation, for example start Sensor Controller tasks</li>
+    <li>Leave critical section</li>
+</ol>
+</p>
+
+<div class="h5"><a name="task_control_wait">Wait for the Previous Task Control Operation to Finish</a></div>
+<p>
+This code waits until the previous task control operation has finished, with a timeout in microseconds. The timeout is application specific. The function returns immediately if task control interface already is ready.
+<pre>// Wait with 20 millisecond timeout
+if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle timeout or usage error (see the function documentation) ...
+} else {
+    ... Perform the next task control operation, for example start Sensor Controller tasks ...
+}</pre>
+</p>
+
+<div class="h5"><a name="start_task">Start or Restart Sensor Controller Tasks</a></div>
+<p>
+Starting a Sensor Controller task triggers the <b>Initialization</b> code. The task is then <i>active</i>.
+</p><p>
+After a Sensor Controller task has been stopped (see below), you must reset the task's data structures before it can be restarted. The <tt>scifResetTaskStructs()</tt> function will always reset the <tt>state</tt> data structure. You can optionally also reset the <tt>cfg</tt>, <tt>input</tt> and <tt>output</tt> data structures.
+</p><p>
+Do the following to (re)start a Sensor Controller task:
+<ul>
+    <li>To start or restart the "IMUv6 Sensor Task" task:</li>
+<pre>// Reset all data structures except configuration
+scifResetTaskStructs(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID, (1 << SCIF_STRUCT_INPUT) | (1 << SCIF_STRUCT_OUTPUT));
+
+// (Re)start the "IMUv6 Sensor Task" Sensor Controller task
+if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle timeout or usage error ...
+} else if (scifStartTasksNbl(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID) != SCIF_SUCCESS) {
+    ... Handle usage error ...
+}</pre>
+</ul>
+</p>
+
+<div class="h5"><a name="stop_task">Stop Sensor Controller Tasks</a></div>
+<p>
+Stopping a Sensor Controller task triggers the <b>Termination</b> code. The task is then <i>inactive</i>.
+</p><p>
+Do the following to stop a Sensor Controller task:
+<ul>
+    <li>To stop the "IMUv6 Sensor Task" task:</li>
+<pre>// Stop the "IMUv6 Sensor Task" Sensor Controller task
+if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle timeout or usage error ...
+} else if (scifStopTasksNbl(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID) != SCIF_SUCCESS) {
+    ... Handle usage error ...
+}</pre>
+</ul>
+</p>
+
+<div class="h5"><a name="run_task_once">Run Sensor Controller Tasks Once</a></div>
+<p>
+Running a Sensor Controller task once triggers the <b>Initialization Code</b>, the <b>Execution Code</b> (one time), and the <b>Termination Code</b>.
+</p><p>
+Do the following to run a Sensor Controller task once:
+<ul>
+    <li>To run the "IMUv6 Sensor Task" task:</li>
+<pre>// Run the "IMUv6 Sensor Task" Sensor Controller task
+if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle timeout or usage error ...
+} else if (scifExecuteTasksOnceNbl(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID) != SCIF_SUCCESS) {
+    ... Handle usage error ...
+}</pre>
+</ul>
+</p>
+
+<div class="h5"><a name="trigger_exec_code">Trigger the Execution Code Block Manually</a></div>
+<p>
+For an <i>active</i> task, it is possible to trigger the <b>Execution Code</b> manually.
+</p><p>
+Do the following to trigger a single iteration of the Execution Code:
+<ul>
+    <li>To run the "IMUv6 Sensor Task" task's Execution Code:</li>
+<pre>// Run the "IMUv6 Sensor Task" Execution Code
+if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle timeout or usage error ...
+} else if (scifSwTriggerExecutionCodeNbl(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID) != SCIF_SUCCESS) {
+    ... Handle usage error ...
+}</pre>
+</ul>
+</p>
+
+
+<div class="h4"><a name="share_io_pins">Share I/O Pins Between the Sensor Controller and the Application</a></div>
+<p>
+In some applications you may want to transfer ownership of I/O pins between the Sensor Controller and MCU domain peripherals, for example when:
+<ul>
+    <li>The Sensor Controller and the application need to access different I2C devices over the same SCL and SDA lines</li>
+    <li>The Sensor Controller and the application need to access different SPI devices over the same SCLK, MOSI and MISO lines, but with different chip select pins</li>
+</ul>
+</p><p>
+To transfer I/O pins from Sensor Controller task(s) to the application:
+<ul>
+    <li>Stop the Sensor Controller task(s) that are currently using the I/O pins</li>
+    <li>You can now open the TI driver(s) that require the I/O pins. An additional step is required for regular GPIO functions:</li>
+    <ul>
+        <li>For the TI GPIO driver: The I/O pins transferred from the Sensor Controller will be mapped to the AUX domain I/O controller, and must be reconfigured before the application uses them through the GPIO hardware module. Call <tt>GPIO_resetConfig()</tt> or <tt>GPIO_setConfig()</tt> to map each I/O pin back to the MCU domain I/O controller and the GPIO hardware module.</li>
+        <li>For the TI PIN driver: The PIN driver assumes that closed I/O pins are mapped to the GPIO hardware module, but the I/O pins transferred from the Sensor Controller will instead be mapped to the AUX domain I/O controller. Add the following code after the I/O pin(s) have been opened with the PIN driver:</li>
+<pre>// For each I/O pin:
+PINCC26XX_setMux(pinHandle, pin, PINCC26XX_MUX_GPIO);</pre>
+    </ul>
+</ul>
+</p><p>
+To transfer I/O pins from the application back to Sensor Controller tasks:
+<ul>
+    <li>Close the TI driver(s) that are currently using the I/O pins</li>
+    <li>Move I/O pin ownership back to the Sensor Controller task(s):</li>
+    <ul>
+        <li>For the IMUv6 Sensor Task task, call:</li>
+<pre>scifReinitTaskIo(1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID);</pre>
+    </ul>
+    <li>You can now restart the Sensor Controller task(s)</li>
+</ul>
+</p>
+
+
+<div class="h4"><a name="constants">Use Project Specific Definitions in the Application</a></div>
+<p>
+The SCIF Driver provides these definitions for use in the application:
+<ul>
+    <li>Target chip identification</li>
+    <ul>
+        <li><tt>SCIF_TARGET_CHIP_NAME_CC2652R1F</tt> (no value)</li>
+        <li><tt>SCIF_TARGET_CHIP_PACKAGE_QFN48_7X7_RGZ</tt> (no value)</li>
+    </ul>
+    <li>Number of tasks</li>
+    <ul>
+        <li><tt>SCIF_TASK_COUNT</tt></li>
+    </ul>
+    <li>Task IDs</li>
+    <ul>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_TASK_ID</tt></li>
+    </ul>
+    <li>User-specified constants</li>
+    <ul>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_ADXL355_AXIS_COUNT</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_ADXL355_AXIS_WORDS</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_ADXL355_I2C_ADDR</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_ADXL355_SPI_READ</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_ADXL355_SPI_WRITE</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BAROM_I2C_ADDR</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_CHARGE_TERMINATION_CURRENT</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_CHARGE_TERMINATION_REG_VALUE</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_DESIGNED_CAP</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_DESIGNED_CAP_DIV_BY_32</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_DESIGNED_CAP_REGISTER_VALUE</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_EMPTY_VOLTAGE</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_EMPTY_VOLTAGE_AND_BATTERY_RECOVERY_VOLTAGE_REGISTER_VALUE</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_RECOVERY_VOLTAGE</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BATTERY_SENSE_RESISTOR</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BMI160_ACCEL_AXIS_COUNT</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BMI160_GYRO_AXIS_COUNT</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_BMI160_I2C_ADDR</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_ADXL355_ACCEL_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_ANALOG_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_BAROMETER_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_BATTERY_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_BMI160_ACCEL_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_BMI160_GYRO_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_CONFIG_ENABLE_MAGNETOMETER_BV</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_KX1221037_AXIS_COUNT</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_KX1221037_I2C_ADDR</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_MAX17055_I2C_ADDR</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_MMC34160PJ_AXIS_COUNT</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_MMC34160PJ_I2C_ADDR</tt></li>
+    </ul>
+    <li>I/O mapping</li>
+    <ul>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_A_ADC_READ</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_I2C_SCL</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_I2C_SDA</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_SPI_CSN_ADXL355</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_SPI_MISO</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_SPI_MOSI</tt></li>
+        <li><tt>SCIF_IMUV6_SENSOR_TASK_DIO_SPI_SCLK</tt></li>
+    </ul>
+</ul>
+</p>
+
+
+<div class="h4"><a name="uninit_driver">Uninitialize the SCIF Driver</a></div>
+<p>
+It is possible to include multiple SCIF driver setups (that is, outputs from multiple Sensor Controller projects) in one application.
+</p><p>
+To switch driver setup, first stop using and uninitialize this SCIF driver:
+<pre>
+// Stop all Sensor Controller tasks
+if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle error...
+} else if (scifStopTasksNbl((1 << SCIF_IMUV6_SENSOR_TASK_TASK_ID)) != SCIF_SUCCESS) {
+    ... Handle error...
+} else if (scifWaitOnNbl(20000) != SCIF_SUCCESS) {
+    ... Handle error...
+
+} else {
+    // All tasks have been stopped successfully
+
+
+    // Disable RTC ticks
+    scifStopRtcTicks();
+
+    // Uninitialize the SCIF driver (includes I/O configuration)
+    scifUninit();
+}</pre>
+</p><p>
+Then initialize the other SCIF driver, as described in its "How to Use" guide.
+</p>
+
+<div class="h5">I/O Pin Configuration</div>
+<p>
+The <tt>scifUninit()</tt> call uninitializes all Sensor Controller I/O pins. The I/O pins will be reverted to regular GPIO inputs, with pull as configured in the Sensor Controller Studio task panel(s).
+</p>
+
+
+<div class="h4"><a name="code_gen_app_prebuild">Run Sensor Controller Studio Code Generator During Application Pre-Build Step</a></div>
+<p>
+Use the Sensor Controller Studio command line interface (CLI) to ensure that the generated SCIF driver is up-to-date.
+</p><p>
+The <tt>-s</tt> parameter prevents file output when existing files already are up-to-date.
+</p>
+
+<div class="h5">IAR EWARM</div>
+<p>
+<ul>
+    <li>Right-click on the project in the project tree</li>
+    <li>Click <i>Options...</i></li>
+    <li>Select <i>Build Actions</i></li>
+    <li>Add the following to the pre-build step (you may need to create a batch file if you have multiple pre-build steps):</li>
+<pre>"C:\Program Files (x86)\Texas Instruments\Sensor Controller Studio\bin\sensor_controller_studio_cli.exe" -g "Z:/repository/OpenAXES/workspace/OpenAXES/SensorController/IMUv6_all_sensors.scp" -s -q</pre><!-- no_compare -->
+</ul>
+</p>
+
+<div class="h5">CCS</div>
+<p>
+<ul>
+    <li>Right-click on the project in the project tree</li>
+    <li>Click <i>Options...</i></li>
+    <li>Select <i>Build</i></li>
+    <li>Add the following to the pre-build steps:</li>
+<pre>"C:/Program Files (x86)/Texas Instruments/Sensor Controller Studio/bin/sensor_controller_studio_cli.exe" -g "Z:/repository/OpenAXES/workspace/OpenAXES/SensorController/IMUv6_all_sensors.scp" -s -q</pre><!-- no_compare -->
+</ul>
+</p>
+
+<div class="h4"><a name="run_doxygen">Generate Doxygen HTML Documentation for the SCIF Driver</a></div>
+<p>
+Doxygen generates HTML documentation based on specially formatted comments in source code. Download Doxygen from <a href="http://www.doxygen.org/">http://www.doxygen.org/</a>.
+</p><p>
+Set the path to <tt>doxygen.exe</tt> in the Preferences panel if needed. The current path is <tt>C:/Program Files/doxygen/bin/doxygen.exe</tt>.<!-- no_compare -->
+</p><p>
+To create or update the HTML documentation, run <tt>scif_run_doxygen.bat</tt>. The generated documentation can then be found here: <a href="scif_dox/index.html">scif_dox/index.html</a>
+</p>
+
+
+</body>
+
+</html>
+
+
+<!-- Generated by DESKTOP-HLPRRTA at 2022-06-21 17:28:19.282 -->
