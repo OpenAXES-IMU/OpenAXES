@@ -1,0 +1,4 @@
+Record=TopLevelDocument|FileName=Battery.SchDoc|SheetNumber= 
+Record=NoMainPathDocument|SourceDocument=Battery.SchDoc|FileName=Sensors.SchDoc|SheetNumber= 
+Record=NoMainPathDocument|SourceDocument=Battery.SchDoc|FileName=SoC.SchDoc|SheetNumber= 
+Record=NoMainPathDocument|SourceDocument=Battery.SchDoc|FileName=USB2UART.SchDoc|SheetNumber= 

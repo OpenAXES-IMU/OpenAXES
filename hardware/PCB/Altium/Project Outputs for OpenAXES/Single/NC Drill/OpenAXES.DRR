@@ -1,0 +1,18 @@
+----------------------------------------------------------------------------------------------------------------------------------
+NCDrill File Report For: OpenAXES.PcbDoc   18/06/2023  17:43:12
+----------------------------------------------------------------------------------------------------------------------------------
+
+Layer Pair : L1 to L4
+ASCII Plated RoundHoles File : OpenAXES-Plated.TXT
+ASCII Non-Plated RoundHoles File : OpenAXES-NonPlated.TXT
+
+Tool       Hole Size               Hole Tolerance               Hole Type       Hole Count   Plated         Tool Travel
+----------------------------------------------------------------------------------------------------------------------------------
+T1      0.2mm (8mil)                                              Round             165       PTH        259.55mm (10.22inch)
+T2      0.4mm (16mil)                                             Round             6         PTH        5.00mm (0.20inch)
+T3      1mm (39mil)                                               Round             2         PTH        16.32mm (0.64inch)
+T4      0.9mm (35mil)                                             Round             2         NPTH       3.00mm (0.12inch)
+----------------------------------------------------------------------------------------------------------------------------------
+Totals                                                                              175
+
+Total Processing Time (hh:mm:ss) : 00:00:01

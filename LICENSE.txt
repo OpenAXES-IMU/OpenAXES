@@ -4,7 +4,7 @@ Upstream-Contact: 	Nils Stanislawski <stanislawski@ims.uni-hannover.de>
 			Fritz Webering <webering@ims.uni-hannover.de>
 Source: https://github.com/IMS-AS-LUH/OpenAXES
 
-Files: hardware/pcb/*
+Files: hardware/PCB/*
 Copyright: 2023, Nils Stanislawski and Fritz Webering
 License: CERN-OHL-S v2 or any later version
 
