@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "OpenAXES-altium-import")(type "KiCad")(uri "${KIPRJMOD}/OpenAXES-altium-import.kicad_sym")(options "")(descr ""))
+)

@@ -1,0 +1,82 @@
+(kicad_sch (version 20230121) (generator eeschema)
+
+  (uuid 32dbabf1-8039-41ca-b7c1-9d712586e1d2)
+
+  (paper "A4")
+
+  (lib_symbols
+  )
+
+
+  (sheet (at 114.3 152.4) (size 38.1 38.1) (fields_autoplaced)
+    (stroke (width 0.1524) (type solid))
+    (fill (color 0 0 0 0.0000))
+    (uuid 65f283eb-a35d-4e66-a147-bf09c507a7de)
+    (property "Sheetname" "USB2UART" (at 114.3 151.6884 0)
+      (effects (font (size 1.27 1.27)) (justify left bottom))
+    )
+    (property "Sheetfile" "USB2UART.kicad_sch" (at 114.3 191.0846 0)
+      (effects (font (size 1.27 1.27)) (justify left top))
+    )
+    (instances
+      (project "OpenAXES"
+        (path "/32dbabf1-8039-41ca-b7c1-9d712586e1d2" (page "4"))
+      )
+    )
+  )
+
+  (sheet (at 114.3 25.4) (size 38.1 38.1)
+    (stroke (width 0.1524) (type solid))
+    (fill (color 0 0 0 0.0000))
+    (uuid 7f99dc96-5154-43c8-92fd-e194d502ae4f)
+    (property "Sheetname" "Sensors" (at 114.3 24.6884 0)
+      (effects (font (size 1.27 1.27)) (justify left bottom))
+    )
+    (property "Sheetfile" "Sensors.kicad_sch" (at 128.27 22.86 0)
+      (effects (font (size 1.27 1.27)) (justify left top))
+    )
+    (instances
+      (project "OpenAXES"
+        (path "/32dbabf1-8039-41ca-b7c1-9d712586e1d2" (page "3"))
+      )
+    )
+  )
+
+  (sheet (at 114.3 81.28) (size 38.1 45.72) (fields_autoplaced)
+    (stroke (width 0.1524) (type solid))
+    (fill (color 0 0 0 0.0000))
+    (uuid 9509833e-ec86-4287-bd92-a136f93d56e5)
+    (property "Sheetname" "SoC" (at 114.3 80.5684 0)
+      (effects (font (size 1.27 1.27)) (justify left bottom))
+    )
+    (property "Sheetfile" "SoC.kicad_sch" (at 114.3 127.5846 0)
+      (effects (font (size 1.27 1.27)) (justify left top))
+    )
+    (instances
+      (project "OpenAXES"
+        (path "/32dbabf1-8039-41ca-b7c1-9d712586e1d2" (page "2"))
+      )
+    )
+  )
+
+  (sheet (at 50.8 88.9) (size 38.1 38.1) (fields_autoplaced)
+    (stroke (width 0.1524) (type solid))
+    (fill (color 0 0 0 0.0000))
+    (uuid af0238f1-b862-4f9e-ba45-1f7cf1e53731)
+    (property "Sheetname" "Battery" (at 50.8 88.1884 0)
+      (effects (font (size 1.27 1.27)) (justify left bottom))
+    )
+    (property "Sheetfile" "Battery.kicad_sch" (at 50.8 127.5846 0)
+      (effects (font (size 1.27 1.27)) (justify left top))
+    )
+    (instances
+      (project "OpenAXES"
+        (path "/32dbabf1-8039-41ca-b7c1-9d712586e1d2" (page "1"))
+      )
+    )
+  )
+
+  (sheet_instances
+    (path "/" (page "0"))
+  )
+)

@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "OpenAXES_parts")(type "KiCad")(uri "${KIPRJMOD}/OpenAXES_parts.pretty")(options "")(descr ""))
+)
