@@ -1,5 +1,8 @@
+![OpenAXES Graphical Abstract](docs/static/images/gagraphic.png)
+
 # OpenAXES
-Hardware design files and source code for an open-access wireless IMU
+
+**Hardware design files and source code for an open-access wireless IMU.**
 
 Other resources, especially publications related to this project, can be found at:
 
