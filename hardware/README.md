@@ -31,8 +31,30 @@ Output files for both single PCB and a panel optimized for mass production are i
 
 - **BMI160**; pin-compatible replacement: BMI270
 
-## Programming adapter
-
 ## Housing
 
+The housing for the OpenAXES IMU can be found in the **hardware/case** subdirectory.
+It was designed in FreeCAD 0.20 for 3D-printing with a 0.4 mm diameter FDM nozzle.
+If the 3D printer is tunes correctly, the two halves of the case will snap together and provide a tight fit for the PCB.
+
+![Photograph of the OpenAXES PCB and case](../docs/static/images/case2-printed-with-pcb.jpg)
+
+There are cutouts for the USB port, the power switch, the analog pads on the bottom of the PCB, and for the JTAG adapter.
+The two holes at the top can be plugged with short pieces of transparent 3D-printing filament (1.75 mm diameter).
+These will act as light guides for the top LEDs next to the battery.
+
+
+## Programming adapter
+
+The programming adapter found in the **hardware/programming-adapter** directory comprises a 3D-printable fixture and a single-layer PCB with spring loaded pins.
+These work together with the case, holding the IMU in place and contacting the six pads on the underside of the IMU PCB, for JTAG programming or debugging.
+
+![3D model and photograph of the programming adapter](../docs/static/images/programmer-with-model.jpg)
+
+
 ## Calibration fixture
+
+The calibration fixture found in **hardware/calibrator** is an icosahedron (20-sided polyhedron) with a recess that accepts the IMU case.
+This fixture can be used together the with scripts in the **calibration** directory to obtain the sensor calibration coefficients for each individual unit.
+
+![Photograph of the calibration fixture with an IMU](../docs/static/images/calibrator-with-imu.jpg)

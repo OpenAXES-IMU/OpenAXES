@@ -1,0 +1,3 @@
+The 20-sided polyhedron 3D model is based on an OpenSCAD model
+by Tim Edwards: https://www.thingiverse.com/thing:1043661
+Licensed under the CC-BY-SA-4.0 license.
