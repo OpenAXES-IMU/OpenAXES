@@ -26,6 +26,10 @@ License: CERN-OHL-S v2 or any later version
 	visible on the external case of OpenAXES or other products you make using
 	this source.
 
+Files: docs/* hardware/README.md firmware/README.md **/README.md
+Copyright: 2023, Nils Stanislawski and Fritz Webering
+License: CERN-OHL-S v2 or any later version
+
 Files: firmware/ccs-project/Madgwick/madgwick_original.*
 Copyright: 2010, Sebastian Madgwick <sebmadgwick@x-io.co.uk>
 License: Madgwick
