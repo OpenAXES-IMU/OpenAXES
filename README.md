@@ -2,12 +2,11 @@
 
 # OpenAXES
 
-**Hardware design files and source code for an open-access wireless IMU.**
+**Hardware design files and source code for an open-access wireless IMU** developed at the [Institute of Microelectronic Systems](https://www.ims.uni-hannover.de/) at the Leibniz University Hannover, Germany.
 
-The OpenAXES IMU is open-source hardware, which means that you are allowed to modify, share, or sell the design, **if** you adhere to the respecitive licenses (see [LICENSE.txt](/LICENSE.txt) for details).
-If you use the OpenAXES project (or parts of it) in scientific work, please see the [Citation](#Citation) section below.
+The OpenAXES IMU is open-source hardware licensed under the CERN-OHL-S-v2+. This means that you are allowed to modify, share, or sell the design, **if** you adhere to the respecitive licenses (see section [License](#license) or [LICENSE.txt](/LICENSE.txt) for details).
 
-This project is developed at the [Institute of Microelectronic Systems](https://www.ims.uni-hannover.de/) at the Leibniz University Hannover, Germany.
+If you use the OpenAXES project (or parts of it) in scientific work, please see the [Citation](#citation) section below.
 
 ## Hardware
 
@@ -35,7 +34,15 @@ please cite our upcoming paper (**submitted for peer review - not published yet*
 
 The correct precise citation will be updated as soon as possible.
 
-## Developers
 
-- Fritz Webering (webering@ims.uni-hannover.de)
-- Nils Stanislawski (stanislawski@ims.uni-hannover.de)
+# License
+
+Copyright 2023 Nils Stanislawski (nils.stanislawski@ims.uni-hannover.de) and Fritz Webering (fritz.webering@ims.uni-hannover.de)
+
+This documentation describes Open Hardware and is licensed under the CERN-OHL-S-v2 or any later version.
+
+You may redistribute and modify this documentation under the terms of the CERN OHL-S-v2 (https://ohwr.org/cern_ohl_s_v2.txt) or any later version. This documentation is distributed WITHOUT ANY EXPRESS OR IMPLIED WARRANTY, INCLUDING OF MERCHANTABILITY, SATISFACTORY QUALITY AND FITNESS FOR A PARTICULAR PURPOSE. Please see the CERN OHL v2-S for applicable conditions
+
+Source Location: https://github.com/IMS-AS-LUH/OpenAXES
+
+For detailed license information on individual files, please see the file [LICENSE.txt](/LICENSE.txt) in the root folder of this repository.

@@ -2,6 +2,8 @@
 
 The **Hardware** subdirectory contains the ECAD design files for the OpenAXES PCB and its fabrication outputs, and MCAD files for the housing and calibration fixture.
 
+This documentation describes Open Hardware and is licensed under the CERN-OHL-S v2 or any later version. See [License](#license) below for more information.
+
 ## PCB
 
 This directory comprises the Altium Designer and KiCad EDA files. 
@@ -58,3 +60,16 @@ The calibration fixture found in **hardware/calibrator** is an icosahedron (20-s
 This fixture can be used together the with scripts in the **calibration** directory to obtain the sensor calibration coefficients for each individual unit.
 
 ![Photograph of the calibration fixture with an IMU](../docs/static/images/calibrator-with-imu.jpg)
+
+
+# License
+
+Copyright 2023 Nils Stanislawski and Fritz Webering
+
+This documentation describes Open Hardware and is licensed under the CERN-OHL-S-v2 or any later version.
+
+You may redistribute and modify this documentation under the terms of the CERN OHL-S-v2 (https://ohwr.org/cern_ohl_s_v2.txt) or any later version. This documentation is distributed WITHOUT ANY EXPRESS OR IMPLIED WARRANTY, INCLUDING OF MERCHANTABILITY, SATISFACTORY QUALITY AND FITNESS FOR A PARTICULAR PURPOSE. Please see the CERN OHL v2-S for applicable conditions
+
+Source Location: https://github.com/IMS-AS-LUH/OpenAXES
+
+For detailed license information on individual files, please see the file [LICENSE.txt](/LICENSE.txt) in the root folder of this repository.
