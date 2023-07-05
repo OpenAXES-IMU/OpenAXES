@@ -53,6 +53,13 @@ These work together with the case, holding the IMU in place and contacting the s
 
 ![3D model and photograph of the programming adapter](../docs/static/images/programmer-with-model.jpg)
 
+The adapter can be used with any JTAG adapter compatible with the CC2652 processor and the Code Composer Studio IDE.
+During development, we used the LAUNCHXL-CC26X2R1 evaluation board from TI as a JTAG programmer.
+All JTAG signals on that board are accessible on a pin header, which is normally populated with jumpers.
+By removing the jumpers, the JTAG interface on the evaluation board can be used for external boards:
+
+![3D model and photograph of the programming adapter](../docs/static/images/programmer-with-launchpad.jpg)
+
 
 ## Calibration fixture
 
