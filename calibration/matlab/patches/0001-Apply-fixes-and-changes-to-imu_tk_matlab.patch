@@ -1,0 +1,419 @@
+From 80cef735dd18f599737af4535050756e3577a534 Mon Sep 17 00:00:00 2001
+From: Fritz Webering <fritz.webering@ims.uni-hannover.de>
+Date: Wed, 12 Jul 2023 17:18:16 +0200
+Subject: [PATCH] Apply fixes and changes to imu_tk_matlab
+
+---
+ CHANGES.md          |  10 ++
+ srcs/calibrate.m    | 246 ++++++++++++++++++++++++++------------------
+ srcs/fromOmegaToQ.m |  10 +-
+ 3 files changed, 165 insertions(+), 101 deletions(-)
+ create mode 100644 CHANGES.md
+
+diff --git a/CHANGES.md b/CHANGES.md
+new file mode 100644
+index 0000000..d54d978
+--- /dev/null
++++ b/CHANGES.md
+@@ -0,0 +1,10 @@
++# Changelog for imu_tk_matlab
++
++This file documents the changes made to the original contents of the `imu_tk_matlab` repository for the OpenAXES project.
++
++## 2022-09-15 Fritz Webering
++
++* `fromOmegaToQ.m`: Fixed division by zero when omega is `[0 0 0]` in at least one frame.
++* `calibrate.m`: Convert script into function `calibrate()` which accepts an array as input.
++* `calibrate.m`: Improved still phase variance calculation from initial still phase.
++* `calibrate.m`: Improved selection of still phase threshold based on the numer of usable still phases, rejecting phases which are too short or the same as the previous phase.
+diff --git a/srcs/calibrate.m b/srcs/calibrate.m
+index 0a7c4c6..d2d1d3b 100644
+--- a/srcs/calibrate.m
++++ b/srcs/calibrate.m
+@@ -1,26 +1,41 @@
+-clear all;
+-close all;
+-clc;
++function [acc_misal_matrix, acc_scale_matrix, acc_bias_vector, ...
++    gyro_misal_matrix, gyro_scale_matrix, gyro_bias_vector, num_segments, static_threshold] ...
++    = calibrate(data, max_segments, static_threshold, do_plot, randaccel, randgyro)
++% calibration of IMU in function
++% data: N rows of IMU data: 1 column index, 3 columns accel, 3 columns gyro
++% max_segments: Maximum number of still segments to consider in the data
++% static_threshold: Accel variance threshold for still phases.
++% do_plot: Show debug plots if true
++% randaccel: (9,1) vector to alter starting value for lsqnonlin
++% randgyro: (9,1) vector to alter starting value for lsqnonlin
+ 
+-% Importing data 
+-IMU0x2Dalpha = importdata('IMU0x2Dalpha.mat'); 
+-IMU0x2Domega = importdata('IMU0x2Domega.mat');
++arguments
++    data double
++    max_segments int32 = 100000
++    static_threshold double = 0
++    do_plot (1,1) int8 = false
++    randaccel (9,1) double = zeros(9,1)
++    randgyro (9,1) double = zeros(9,1)
++end
+ 
+-time = IMU0x2Domega(:,1)';
++IMU0x2Domega =[ data(:,1), data(:,5:7)];
++IMU0x2Dalpha = data(:,1:4);
+ 
+-intervals = zeros(1, length(time));
+-intervals(1) = ((time(2) - time(1))/2) + time(1)/2;
+-intervals(2:length(intervals)) = time(2:length(time))-time(1:length(time)-1);
++offset_acc_x = 0;
++offset_acc_y = 0;
++offset_acc_z = 0;
++offset_gyro_x = 0;
++offset_gyro_y = 0;
++offset_gyro_z = 0;
++
++%time = IMU0x2Domega(:,1)';
++
++%intervals = zeros(1, length(time));
++%intervals(1) = ((time(2) - time(1))/2) + time(1)/2;
++%intervals(2:length(intervals)) = time(2:length(time))-time(1:length(time)-1);
+ 
+ total_sample = length(IMU0x2Domega(:,1));
+ 
+-offset_acc_x = 33123;
+-offset_acc_y = 33276;
+-offset_acc_z = 32360;
+-offset_gyro_x = 32768;
+-offset_gyro_y = 32466;
+-offset_gyro_z = 32485;
+-
+ a_xp = IMU0x2Dalpha(:,2)' - offset_acc_x*ones(1,total_sample);
+ a_yp = IMU0x2Dalpha(:,3)' - offset_acc_y*ones(1,total_sample);
+ a_zp = IMU0x2Dalpha(:,4)' - offset_acc_z*ones(1,total_sample);
+@@ -32,7 +47,23 @@ omega_z = IMU0x2Domega(:,4)' - offset_gyro_z*ones(1,total_sample);
+ 
+ %% Static State Statistical Filter
+ 
+-var_3D = (var(a_xp(1:3000))^2 + var(a_yp(1:3000))^2 + var(a_zp(1:3000))^2);
++if static_threshold == 0
++    begin = 100;
++    range = 3000;
++    new_var_3D = (var(a_xp(begin:range))^2 + var(a_yp(begin:range))^2 + var(a_zp(begin:range))^2);
++    var_3D = inf;
++    while new_var_3D < 10 * var_3D
++        if new_var_3D < var_3D
++            selected_range = range;
++            var_3D = new_var_3D;
++        end
++        range = range + 100;
++        new_var_3D = (var(a_xp(begin:range))^2 + var(a_yp(begin:range))^2 + var(a_zp(begin:range))^2);
++    end
++    disp(['Calculated 3D variance for ' num2str(selected_range - begin - 100) ' samples of static state is ' num2str(var_3D)]);
++else
++    var_3D = static_threshold;
++end
+ 
+ w_d = 101;               % Window's dimension
+ 
+@@ -42,11 +73,6 @@ normal_z = zeros(1, total_sample);
+ 
+ half_w_d = floor(w_d/2);
+ 
+-% inizialize integral
+-integral_x = sum(a_xp(1:w_d)*0.01);
+-integral_y = sum(a_yp(1:w_d)*0.01);
+-integral_z = sum(a_zp(1:w_d)*0.01);
+-
+ for i = (half_w_d + 1):total_sample - (half_w_d + 1)
+     
+    normal_x(i) = var(a_xp(i - half_w_d:i + half_w_d));
+@@ -57,21 +83,26 @@ end
+ 
+ s_square = (normal_x.^2 + normal_y.^2 + normal_z.^2);
+ 
+-plot(s_square);
++%plot(s_square);
+ 
+ s_filter = zeros(1, total_sample);
+ 
+ %% Cycle used to individuate the optimal threshold
+ 
+-max_times_the_var = 10;
++max_times_the_var = 15; %originally max_times_the_var = 10
+ 
+-res_norm_vector = zeros(9 + 1 + 1,max_times_the_var);
++res_norm_vector = ones(9 + 1 + 1 + 1,max_times_the_var) * 10;
+ 
++all_selected_segment_bounds = cell(max_times_the_var, 1);
++if static_threshold ~= 0
++    max_times_the_var = 1;
++end
+ for times_the_var = 1:max_times_the_var
++    current_threshold = 4 * times_the_var * var_3D;
+     
+     for i = half_w_d:total_sample - (half_w_d + 1)
+         
+-        if s_square(i) < times_the_var*var_3D
++        if s_square(i) < current_threshold
+             
+             s_filter(i) = 1;
+             
+@@ -86,8 +117,6 @@ for times_the_var = 1:max_times_the_var
+     samples = 0;
+     start = 0;
+ 
+-    falg = 0;
+-    
+     if filter(1) == 0
+     
+         flag = 0;
+@@ -137,13 +166,30 @@ for times_the_var = 1:max_times_the_var
+     l = 1;
+     
+     
++    prev_accel = [0 0 0];
++    too_short_count = 0;
++    duplicate_count = 0;
++    selected_segments = zeros(1,3);
++    segment_index = 1;
+     for j = 1:length(QS_time_interval_info_matrix(:,1))
+         
+-        if QS_time_interval_info_matrix(j,3) < num_samples
+-            
+-            
+-            
+-        else
++        if segment_index > max_segments
++            break
++        end
++        start_index = QS_time_interval_info_matrix(j, 1);
++        curr_accel = signal(1:3, start_index);
++        dot_norm = dot(prev_accel, curr_accel) / (norm(curr_accel)^2);
++
++        if 1 - dot_norm < 0.01
++            duplicate_count = duplicate_count + 1;
++        elseif QS_time_interval_info_matrix(j,3) < num_samples
++
++            too_short_count = too_short_count + 1;
++
++        else % Segment is suitable, select it
++            prev_accel = curr_accel;
++            selected_segments(segment_index,:) = QS_time_interval_info_matrix(j,:);
++            segment_index = segment_index + 1;
+             
+             selection_step = floor(QS_time_interval_info_matrix(j,3)/num_samples);
+             
+@@ -160,27 +206,56 @@ for times_the_var = 1:max_times_the_var
+         end
+         
+     end
++    all_selected_segment_bounds{times_the_var} = selected_segments;
+     
+     % minimization
+     selectedAccData = selected_data;
++    %figure("Name", string(times_the_var))
++    %plot(selected_data')
+     
+-    theta_pr = [0, 0, 0, 0, 0, 0, 0, 0, 0];
++    theta_pr = [0, 0, 0, 1, 1, 1, 0, 0, 0]+randaccel';
+     
+     ObjectiveFunction = @(theta_pr) accCostFunctLSQNONLIN(theta_pr, selectedAccData);
+-    options = optimset('MaxFunEvals', 150000, 'MaxIter', 6000, 'TolFun', 10^(-10));
++    %options = optimset('MaxFunEvals', 150000, 'MaxIter', 6000, 'TolFun', 10^(-15), 'TolX', 10^(-10));
++    options = optimoptions('lsqnonlin', 'MaxFunctionEvaluations', 150000, 'MaxIterations', 6000, 'FunctionTolerance', 10^(-10), 'Display', 'none');
++    total_segments = length(QS_time_interval_info_matrix(:,1));
++    usable_segments = total_segments - too_short_count - duplicate_count;
++
++    %[theta_pr, rsnorm] = lsqnonlin(ObjectiveFunction, theta_pr, [], [], options);
++    %rsnorm = rsnorm / size(selectedAccData, 2);
++    if (usable_segments < 20) || (duplicate_count > usable_segments)
++        mse = 1000000000;
++    else
++        [theta_pr, rsnorm] = lsqnonlin(ObjectiveFunction, theta_pr, [], [], options);
++        mse = rsnorm / size(selectedAccData, 2);
++    end
+     
+-    [theta_pr rsnorm] = lsqnonlin(ObjectiveFunction, theta_pr, [], [], options);
++    %disp(['Threshold ' num2str(times_the_var) ' has ' num2str(usable_segments) ' usable segments, ' num2str(too_short_count) ' too short and ' num2str(duplicate_count) ' duplicates. Mean squared error is ' num2str(mse)])
+     
+-    res_norm_vector(:,times_the_var) = [theta_pr';rsnorm;times_the_var*var_3D];
++    res_norm_vector(:,times_the_var) = [theta_pr'; mse; current_threshold; usable_segments];
+     
+     
+ end
+ 
+-vec = res_norm_vector(10,:);  
++usable_segments_list = res_norm_vector(12,:);
++z = find(usable_segments_list==max(max(usable_segments_list)));
+ 
+-z=find(vec==min(min(vec)));
++if length(z) ~= 1
++    %error('unable to find suitable static threshold')
++    disp('found more than one configuration with the most usable segments: ')
++    disp(z)
++    residuals_list = res_norm_vector(10, z);
++    z = find(residuals_list==min(min(residuals_list)));
++    z = z(1);
++end
++selected_segments = all_selected_segment_bounds{z};
++num_segments = length(selected_segments(:, 1));
+ 
+ threshold_opt = res_norm_vector(11,z);
++if static_threshold == 0
++    disp(['Best found variance threshold for resting: ' num2str(4*z) ' * ' num2str(var_3D)])
++    static_threshold = threshold_opt;
++end
+ 
+ theta_pr_opt = res_norm_vector(1:9,z)';
+ 
+@@ -200,12 +275,21 @@ for i = half_w_d:total_sample - (half_w_d + 1)
+     
+ end
+ 
+-figure
+-plot(a_xp)
+-hold on
+-plot(a_yp, 'red')
+-plot(a_zp, 'green')
+-plot(5000*s_filter, 'black')
++if do_plot
++    figure
++    title('accel')
++    hold on
++    ylim = [-15 20];
++    for j = 1:length(selected_segments(:,1))
++        xbars = selected_segments(j, 1:2);
++        patch([xbars(1) xbars(1), xbars(2) xbars(2)], [min(ylim) max(ylim) max(ylim) min(ylim)], [0.8 0.8 0.8])
++    end
++    plot(a_xp)
++    plot(a_yp, 'red')
++    plot(a_zp, 'green')
++    plot(20*s_filter, 'black')
++    plot(min(s_square / var_3D, 15), 'cyan')
++end
+ 
+ 
+ %-------------------------------------------------------------------------%
+@@ -232,11 +316,14 @@ for i=1:total_sample
+     end
+ end
+ 
+-figure
+-plot(omega_x);
+-hold on
+-plot(omega_y, 'red');
+-plot(omega_z, 'green');
++if do_plot
++    figure
++    hold on
++    title('gyro')
++    plot(omega_x);
++    plot(omega_y, 'red');
++    plot(omega_z, 'green');
++end
+ 
+ estimate_bias_x = mean(omega_x(init_long_qs_interval_start:init_long_qs_interval_end));
+ estimate_bias_y = mean(omega_y(init_long_qs_interval_start:init_long_qs_interval_end));
+@@ -246,15 +333,6 @@ omega_x = omega_x - estimate_bias_x;
+ omega_y = omega_y - estimate_bias_y;
+ omega_z = omega_z - estimate_bias_z;
+ 
+-figure
+-plot(omega_x);
+-hold on
+-plot(omega_y, 'red');
+-plot(omega_z, 'green');
+-disp(estimated_biasVector); % accelerator bias vector
+-disp(estimated_scalingMatrix); % acc
+-disp(estimated_misalignmentMatrix); % acc
+-disp([estimate_bias_x, estimate_bias_y, estimate_bias_z]); % gyro
+ %-------------------------------------------------------------------------%
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ %%%                     GYROSCOPE MINIMIZATION                          %%%
+@@ -275,8 +353,6 @@ QS_time_interval_info_matrix = zeros(1 + 1 + 1 + 3, 1);
+ 
+ samples = 0;
+ start = 0;
+-% Inizializzazione flag
+-falg = 0;
+ if filter(1) == 0
+     flag = 0;
+ else
+@@ -328,42 +404,16 @@ end
+ QS_time_interval_calib_info_matrix = QS_time_interval_info_matrix;
+ 
+ % Minimizing LSQNONLIN
+-theta_pr_gyro = [1/6258,0,0,0,1/6258,0,0,0,1/6258];
+-option = optimset('TolX', 10^-7, 'TolFun' , 10^-6, 'MaxFunEvals', 400);
++theta_pr_gyro = [1,0,0,0,1,0,0,0,1]+randgyro';
++%option = optimset('TolX', 10^-7, 'TolFun' , 10^-6, 'MaxFunEvals', 400);
++option = optimoptions('lsqnonlin', 'MaxFunctionEvaluations', 400, 'FunctionTolerance', 10^-6, 'StepTolerance', 10^-7, 'Display', 'none');
+ theta_pr_gyro = lsqnonlin(@(theta_pr_gyro) gyroCostFunctLSQNONLIN(theta_pr_gyro, QS_time_interval_calib_info_matrix, omega_x, omega_y, omega_z), theta_pr_gyro, [], [], option);
+ 
+-misal_matrix = [1, theta_pr_gyro(2), theta_pr_gyro(3); theta_pr_gyro(4), 1, theta_pr_gyro(6); theta_pr_gyro(7), theta_pr_gyro(8), 1];
+-scale_matrix = [theta_pr_gyro(1), 0, 0; 0, theta_pr_gyro(5), 0; 0, 0, theta_pr_gyro(9)];
++acc_misal_matrix = estimated_acc_misalignmentMatrix;
++acc_scale_matrix = estimated_acc_scalingMatrix;
++acc_bias_vector = estimated_acc_biasVector;
++gyro_misal_matrix = [1, theta_pr_gyro(2), theta_pr_gyro(3); theta_pr_gyro(4), 1, theta_pr_gyro(6); theta_pr_gyro(7), theta_pr_gyro(8), 1];
++gyro_scale_matrix = [theta_pr_gyro(1), 0, 0; 0, theta_pr_gyro(5), 0; 0, 0, theta_pr_gyro(9)];
++gyro_bias_vector = [estimate_bias_x, estimate_bias_y, estimate_bias_z];
+ 
+-DS_a_scale = diag([415, 413, 415]);
+-DS_a_misal = [1.00, 0.00, -0.01; 0.01, 1.00, 0.01; 0.02, 0.01, 1.00];
+-DS_g_scale = diag([4778, 4758, 4766]);
+-DS_g_misal = [1.00, -0.01, -0.02; 0.00, 1.00, 0.04; -0.01, 0.01, 1.00];
+-disp(scale_matrix); % gyro
+-disp(misal_matrix); % gyro
+-
+-disp(['Accelerometer''','s Scaling Matrix taken from datasheet:']);
+-disp(DS_a_scale);
+-disp(['Accelerometer''','s Misalignment Matrix taken from datasheet:']);
+-format bank
+-disp(DS_a_misal);
+-disp(['Gyroscope''','s Scaling Matrix taken from datasheet:']);
+-format short
+-disp(DS_g_scale);
+-disp(['Gyroscope''','s Misalignment Matrix taken from datasheet:']);
+-format bank
+-disp(DS_g_misal);
+-disp('-----------------------------------------------------------------')
+-
+-format short
+-[comp_a_scale, comp_a_misal, comp_g_scale, comp_g_misal] = ...
+-    obtainComparableMatrix(estimated_scalingMatrix, estimated_misalignmentMatrix, scale_matrix, misal_matrix);
+-
+-disp(['Accelerometer''','s Estimated Scaling Matrix:']);
+-disp(comp_a_scale);
+-disp(['Accelerometer''','s Estimated Misalignment Matrix:']);
+-disp(comp_a_misal);
+-disp(['Gyroscope''','s Estimated Scaling Matrix:']);
+-disp(comp_g_scale);
+-disp(['Gyroscope''','s Estimated Misalignment Matrix:']);
+-disp(comp_g_misal);
+\ No newline at end of file
++end
+\ No newline at end of file
+diff --git a/srcs/fromOmegaToQ.m b/srcs/fromOmegaToQ.m
+index 5467877..728c0e9 100644
+--- a/srcs/fromOmegaToQ.m
++++ b/srcs/fromOmegaToQ.m
+@@ -10,9 +10,13 @@ q = zeros(1,4);
+ for i = 1:s(2)
+     
+     angularRotation(i) = (omega(1,i)^2 + omega(2,i)^2 + omega(3,i)^2)^(1/2)*intervals(i);
+-    direction(:,i) = omega(:,i)*(intervals(i)/angularRotation(i));
+-    dir = direction(:,i)';
+-    q(i, :) = [cos(angularRotation(i)/2), sin(angularRotation(i)/2)*dir];
++    if angularRotation(i) == 0 % Avoid division by zero if first omega triple is [0 0 0]
++        q(i, :) = [1 0 0 0]; % unit quaternion == no rotation 
++    else
++        direction(:,i) = omega(:,i)*(intervals(i)/angularRotation(i));
++        dir = direction(:,i)';
++        q(i, :) = [cos(angularRotation(i)/2), sin(angularRotation(i)/2)*dir];
++    end
+     
+ end
+ 
+-- 
+2.25.1
+

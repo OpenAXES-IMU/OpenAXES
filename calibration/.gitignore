@@ -1,0 +1,4 @@
+openaxes_example_calibration_dataset/*.mat
+openaxes_example_calibration_dataset/logs
+openaxes_example_calibration_dataset/cuboid_logs
+openaxes_example_calibration_dataset.zip
