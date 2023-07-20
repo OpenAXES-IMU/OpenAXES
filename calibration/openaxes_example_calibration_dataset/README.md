@@ -17,7 +17,7 @@ The script `coefficients-from-mat-files.py` can be used to extract the calibrati
 ## Evaluation
 
 The `matlab_eval` subdirectory contains the scripts used to calculate the evaluation data presented in [our preprint][3].
-To run it, you need the patched `imu_tk_matlab` code from the [OpenAXES repository](https://github.com/IMS-AS-LUH/OpenAXES) see the file [`/calibration/README.md`](https://github.com/IMS-AS-LUH/OpenAXES/blob/main/calibration/README.md) there.
+To run it, you need the patched `imu_tk_matlab` code from the [OpenAXES repository](https://github.com/OpenAXES-IMU/OpenAXES) see the file [`/calibration/README.md`](https://github.com/OpenAXES-IMU/OpenAXES/blob/main/calibration/README.md) there.
 
 
 ## Dataset Recording
