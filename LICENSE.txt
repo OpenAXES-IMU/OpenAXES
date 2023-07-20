@@ -127,3 +127,8 @@ License: TI-SDK
 Files: dataset/openaxes-example-robot-dataset.ipynb
 Copyright: 2023, Fritz Webering, Christian Fahnemann, Nils Stanislawski
 License: LGPL-3+
+
+Files: tools/imu_control/*
+Copyright: 2023, Fritz Webering
+License: LGPL-3+
+
