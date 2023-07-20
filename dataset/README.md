@@ -32,7 +32,7 @@ The redundancy comes from the fact that each IMU has 3 rotational degrees of fre
 * Data recorded from the IMUs is in the directory `measure_raw-2022-09-15/`, one folder per scenario.
 In those folders, there is one CSV file per IMU.
 * Data recorded from the robot arm is in the directory `measure_raw-2022-09-15/robot/`, one CSV and MAT file per scenario.
-* Some photos and videos can be found in `Media`. Videos are stored in [git lfs](https://git-lfs.com/).
+* Some photos and videos of the recording process can be found in `Media`. Videos are stored in [git lfs](https://git-lfs.com/).
 
 ## Evaluation
 
@@ -47,7 +47,9 @@ jupyter trust openaxes-example-robot-dataset.ipynb
 **Beware:** This notebook is not a comprehensive evaluation and any results and plots shown in the file are not necessarily scientifically sound evidence of anything.
 
 The notebook will store intermediate files in the `measure_raw-2022-09-15` directory, like the quaternion files calculated by the different filters, or the files containing the reconstructed TCP positions.
-All intermediate files should be ignored by the file `measure_raw-2022-09-15/.gitignore`, which is stored in [git lfs](https://git-lfs.com/).
+All intermediate files should be ignored by the file `measure_raw-2022-09-15/.gitignore`.
+
+The generated intermediate files are also provided in the file `measure_raw-2022-09-15.tar.bz2`, in case you want to inspect the generated files without running the the notebook.
 
 ## Tools
 
