@@ -20,6 +20,7 @@ Since the raw sensor data of these measurements is available, the calibration co
 
 Since there are are 6 joints but only 4 IMUS, some redundancy must be exploited.
 The redundancy comes from the fact that each IMU has 3 rotational degrees of fredom, but each joint has only one:
+
 * The data for `q0` and `q1` are both derived from the orientation of the "humerus" IMU.
 * `q2` is the difference<sup>†</sup> between the orientation of the "humerus" and "radius" IMUs.
 * `q3` is the difference between the orientation of the "radius" and "carpus" IMUs.

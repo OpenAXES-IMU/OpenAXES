@@ -93,9 +93,24 @@ These IMU names can then be used on the command line as shown in the examples be
 * Disable use of calibration coefficients (until IMU reboot):
   `./imu_control.py imuX --command USE_CALIBRATION 0` to disable calibration.
 * Run `./imu_control.py --command USE_CALIBRATION 1` to enable calibration.
-* Permanently reset all calibration coefficients for this IMU:
-  `./imu_control.py imuX --write-calibration-full '1 0 0  0 1 0  0 0 1   0 0 0   1 0 0  0 1 0  0 0 1   0 0 0   1 0 0  0 1 0  0 0 1   0 0 0'`.
-  The numbers are three 3x3 identity calibration matrices and three 3-element zero bias vectors.
+* Write new calibration coefficients to flash memory on the IMU.
+  **You must** replace the ones and zeros with the actual calibration coefficients for each unit according to [the calibration instructions](/calibration/README.md).
+  ```
+  ./imu_control.py imuX --write-calibration-full 'COEFFICIENTS'
+  ```
+  
+  The argument `'COEFFICIENTS'` must be a space-separated and quoted list of 36 floating point numbers.
+  These numbers are three 3x3 identity calibration matrices and three 3-element zero bias vectors:
+  1. 9 Coefficients in [row-major order](https://en.wikipedia.org/wiki/Row-_and_column-major_order) for the 3x3 ADXL355 accelerometer scale and nonlinearity calibration matrix.
+  2. 3 Coefficients for the ADXL355 bias vector.
+  3. 9 Coefficients in [row-major order](https://en.wikipedia.org/wiki/Row-_and_column-major_order) for the BMI160 accelerometer scale and nonlinearity calibration matrix.
+  4. 3 Coefficients for the BMI160 accelerometer bias vector.
+  5. 9 Coefficients in [row-major order](https://en.wikipedia.org/wiki/Row-_and_column-major_order) for the BMI160 gyroscope scale and nonlinearity calibration matrix.
+  6. 3 Coefficients for the BMI160 gyroscope bias vector.
+* Permanently reset all calibration coefficients to their default uncalibrated state by setting the calibration matrices to identity and the bias vectors to zero with the following command:
+  ```
+  ./imu_control.py imuX --write-calibration-full '1 0 0  0 1 0  0 0 1   0 0 0   1 0 0  0 1 0  0 0 1   0 0 0   1 0 0  0 1 0  0 0 1   0 0 0'
+  ```
 
 # Usage of bleak_imu_control.py
 
