@@ -132,3 +132,7 @@ Files: tools/imu_control/*
 Copyright: 2023, Fritz Webering
 License: LGPL-3+
 
+Files: tools/visualization/*
+Copyright: 2016, The Qt Company Ltd.
+Copyright: 2023, Fritz Webering
+License: BSD-3-Clause
